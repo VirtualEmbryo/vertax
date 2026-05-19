@@ -20,7 +20,6 @@ import numpy as np
 import jax.numpy as jnp
 
 from vertax import BoundedMesh
-from vertax.meshes.plot import _get_arc_with_n_points
 
 
 def _seg_line_intersect(p0: np.ndarray, p1: np.ndarray,
@@ -53,32 +52,65 @@ def _seg_line_intersect(p0: np.ndarray, p1: np.ndarray,
 
 def _arc_line_intersect(p0: np.ndarray, p1: np.ndarray, angle: float,
                         origin: np.ndarray, normal: np.ndarray,
-                        n_arc: int = 200
                         ) -> tuple[bool, float, np.ndarray]:
-    """Intersection of the division line with a circular arc.
+    """Exact algebraic intersection of the division line with a circular arc.
 
-    The arc connects p0 to p1 with a given inscribed angle (VertAX parametrisation).
-    It is discretised into n_arc sub-segments and _seg_line_intersect is applied
-    to each until the first intersection is found.
+    Direct port of circle_inter from bounded_division (vertax/division.py).
 
-    t_arc ∈ [0, 1] is the fractional position of the intersection along the arc
-    (0 = near p0, 1 = near p1):
-        t_arc = (i + t_seg) / n_arc
-    where i is the sub-segment index and t_seg ∈ [0,1] the local fraction.
+    The arc connects p0 to p1 with inscribed angle α (VertAX parametrisation).
+    The division line passes through origin with direction d ⊥ normal.
 
-    Intersections too close to the endpoints (t_arc < 1e-4 or > 1-1e-4) are
-    excluded: they correspond to a line passing through an existing vertex,
-    handled separately by the 'vertex_tgt'/'vertex_src' cases.
+    Steps:
+      1. Reconstruct circle (center, radius) from chord [p0, p1] and α.
+      2. Solve line-circle intersection algebraically (quadratic in t).
+      3. Filter: point must lie on the arc (dot-product angular test, no arccos)
+         and on the correct side of the chord.
+      4. Exclude intersections within 1e-4 of arc endpoints (handled by
+         vertex_tgt/vertex_src cases).
 
-    Returns (intersects, t_arc, point_on_arc).
+    Returns (intersects, t_chord, point) where t_chord ∈ [0,1] is the
+    fractional projection of the intersection onto the chord [p0, p1].
     """
-    arc_pts = np.array([p0] + _get_arc_with_n_points(angle, p0, p1, nb_draw_points=n_arc) + [p1])
-    for i in range(len(arc_pts) - 1):
-        hit, t_seg, pt = _seg_line_intersect(arc_pts[i], arc_pts[i + 1], origin, normal)
-        if hit and -1e-9 <= t_seg <= 1 + 1e-9:
-            t_arc = (i + t_seg) / (len(arc_pts) - 1)
-            if 1e-4 < t_arc < 1 - 1e-4:
-                return True, t_arc, pt
+    def cross2d(a, b): return a[0] * b[1] - a[1] * b[0]
+
+    d = np.array([-normal[1], normal[0]])   # direction along the division line
+
+    # ── 1. Circle ────────────────────────────────────────────────────────────
+    v = p1 - p0
+    L = np.linalg.norm(v)
+    if L < 1e-12:
+        return False, 0.0, p0
+    m    = 0.5 * (p0 + p1)
+    r    = L / (2.0 * np.sin(angle))
+    h    = np.sqrt(max(r**2 - (L / 2.0)**2, 0.0))
+    perp = np.array([-v[1], v[0]]) / L
+    center    = m + h * perp
+    cos_alpha = np.cos(2.0 * angle)
+
+    # ── 2. Line-circle intersection ──────────────────────────────────────────
+    m0   = origin - center
+    b    = 2.0 * np.dot(d, m0)
+    c    = np.dot(m0, m0) - r**2
+    disc = b**2 - 4.0 * c
+    if disc <= 0.0:
+        return False, 0.0, p0
+    sq = np.sqrt(disc)
+
+    # ── 3. Arc filtering (no arccos) ─────────────────────────────────────────
+    s_vec = p0 - center
+    t_vec = p1 - center
+    for sign in (-1.0, 1.0):
+        pt    = origin + ((-b + sign * sq) * 0.5) * d
+        p_vec = pt - center
+        if (np.dot(s_vec, p_vec) >= r * r * cos_alpha and
+                np.dot(t_vec, p_vec) >= r * r * cos_alpha and
+                cross2d(v, pt - p0) * cross2d(v, center - p0) <= 0.0):
+            # fractional position along chord as proxy for arc position
+            denom = np.dot(v, v)
+            t = float(np.dot(pt - p0, v) / denom) if denom > 1e-12 else 0.5
+            if 1e-4 < t < 1 - 1e-4:
+                return True, t, pt
+
     return False, 0.0, p0
 
 
