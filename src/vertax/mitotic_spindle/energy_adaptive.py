@@ -7,6 +7,10 @@ after each division by setting face_params = current_mean_area.
 
 Also provides outer_loss_homogenise: an outer loss that penalises
 dispersion of tensions and cell areas, driving both toward uniformity.
+
+The inner energy has two contributions:
+  - Area elasticity : K_AREAS · Σ (area_i - target)²
+  - Edge tension    : Σ length_e · tension_e
 """
 
 import jax
@@ -16,7 +20,7 @@ from jax import vmap, jit
 from vertax.geo import get_area_bounded, get_edge_length, get_surface_length
 
 
-K_AREAS = 100
+K_AREAS = 200
 K_OUTER_TENSIONS = 1.0   # weight of tension homogenisation in outer loss
 K_OUTER_AREAS    = 10.0  # weight of area homogenisation in outer loss
 
@@ -44,6 +48,7 @@ def _inner_edge_energy(edge, tension, vertTable, heTable):
 def _surface_edge_energy(edge, tension, vertTable, angTable, heTable):
     length = get_surface_length(edge, vertTable, angTable, heTable)
     return length * tension
+
 
 
 def energy_adaptive(
@@ -89,8 +94,8 @@ def energy_adaptive(
     def mapped_surface(edge, tension):
         return _surface_edge_energy(edge, tension, vertTable_full, angTable_full, heTable)
 
-    area_energies = jnp.sum(vmap(mapped_area)(faces))
-    inner_energies = jnp.sum(vmap(mapped_inner)(unique_edges, tensions))
+    area_energies    = jnp.sum(vmap(mapped_area)(faces))
+    inner_energies   = jnp.sum(vmap(mapped_inner)(unique_edges, tensions))
     surface_energies = jnp.sum(vmap(mapped_surface)(edges, jnp.repeat(tensions, 2)))
 
     return K_AREAS * area_energies + inner_energies + surface_energies

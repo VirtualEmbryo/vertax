@@ -27,20 +27,26 @@ We implement a full biophysical model (`spindle_model.py`) with three selectable
 - Same density as `'pdf'`, but the division axis is **randomly sampled** from p(α)
 - Models the stochastic variability observed experimentally (thermal noise + nuclear friction)
 
-### 2. Arc intersection detection
+### 2. Cell division: direct port of `bounded_division` with a `BoundedMesh` wrapper
 
-Both use the same **exact algebraic** approach (port of `circle_inter` from `bounded_division`):
-- Reconstruct circle from chord and inscribed angle
+`cell_division.py` embeds `bounded_division`'s JAX-compiled `cell_division()` verbatim, plus a `divide_cell(mesh, face_id, c, u)` wrapper.
+
+The wrapper is necessary because `bounded_division`'s `cell_division()` operates on raw JAX arrays `(vertTable, angTable, heTable, faceTable, divOrders, divAxes)`, while our pipeline works with `BoundedMesh` objects and a spindle vector `u` rather than an angle. The wrapper:
+1. Extracts the raw tables from the `BoundedMesh`.
+2. Converts the spindle vector `u` to an angle `alpha = atan2(uy, ux)`.
+3. Calls `cell_division()` and trims the padded output arrays.
+4. Reconstructs a new `BoundedMesh` with propagated `edges_params`, `faces_params`, and `vertices_params`.
+
+Two bugs in `bounded_division` are fixed in the process:
+- **`div_face` index bug**: `body_fun` passed the loop index `i` as `div_face` instead of the actual `face` id — causing `faceTable[0]` to be overwritten on every single-cell division. Fixed by passing `face` instead.
+- **`jax.lax.select` dtype conflict**: in JAX x64 mode, Python integer literals are `int64` while computed half-edge indices are `int32`. `lax.select` requires identical dtypes; all `jax.lax.select` calls replaced by `jnp.where`, which auto-promotes.
+
+### 3. Arc intersection detection
+
+`bounded_division`'s `get_intersection()` handles both straight edges and circular arcs in a unified JAX-compiled function. The algebraic approach:
+- Reconstruct the circle from chord and inscribed angle
 - Solve line-circle intersection algebraically (quadratic)
 - Filter candidate points via dot-product angular constraints (no arccos)
-
-Our `_arc_line_intersect` is a NumPy port of `bounded_division`'s JAX `circle_inter`.
-
-### 3. Quasi-coincident vertex detection (our contribution)
-
-`bounded_division` has no mechanism to detect when the division line passes close to an existing vertex.
-
-We introduce `VERTEX_TOL = 0.03` in `_detect_cuts`: if the intersection parameter t is within VERTEX_TOL of 0 or 1, the existing vertex is reused instead of creating a new one. This reduces interstitial artefacts after relaxation.
 
 ### 4. Post-division T1 transitions
 
@@ -68,12 +74,22 @@ The standard VertAX inner energy uses a fixed `TARGET_AREA` constant.
 
 We implement `energy_adaptive` which reads the target area from `face_params[0]`, updated after each division to `initial_total_area / nb_faces`. This ensures the mechanical equilibrium target scales correctly as the number of cells grows.
 
+### 7. Outer loss clipping (our contribution)
+
+After each outer optimisation epoch, `face_params` (area targets) are clipped to ±50% around the current mean target:
+
+```python
+mesh_opt.faces_params = jnp.clip(mesh_opt.faces_params, target * 0.5, target * 1.5)
+```
+
+This prevents the bilevel outer optimiser from pushing individual area targets to degenerate values that would collapse cells.
+
 ## Pipeline
 
 ```
 find_spindle          →  spindle axis: Newton-Raphson | PDF mode | PDF sample
-divide_cell           →  half-edge topology surgery (NumPy)
-inner_optimization    →  mechanical relaxation (Adam with cosine decay, lr ≤ 5e-4)
+divide_cell           →  JAX-compiled topology surgery (bounded_division port)
+inner_optimization    →  mechanical relaxation (Adam warmup-cosine, peak lr 8e-4)
 bilevel_optimization  →  area homogenisation (outer loss on he_params, face_params)
 ```
 

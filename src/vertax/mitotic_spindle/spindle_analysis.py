@@ -75,7 +75,7 @@ def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int,
 
 def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                     d_fraction: float = 0.3, n_gauss: int = 12,
-                    max_opt_iter: int = 5000,
+                    max_opt_iter: int = 2000,
                     n_outer_epochs: int = 3,
                     spindle_method: str = 'newton',
                     spindle_pdf_C: float = 0.1,
@@ -131,10 +131,10 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
             mesh_backup = BoundedMesh.copy_mesh(mesh_opt)
 
             schedule = optax.warmup_cosine_decay_schedule(
-                init_value=0.0, peak_value=5e-4,
+                init_value=0.0, peak_value=8e-4,
                 warmup_steps=200, decay_steps=max_opt_iter, end_value=1e-6)
             for solver, label in [(optax.adam(learning_rate=schedule), "Adam warmup-cosine"),
-                                  (optax.adam(learning_rate=5e-5), "Adam 5e-5"),
+                                  (optax.adam(learning_rate=1e-4), "Adam 1e-4"),
                                   (optax.adam(learning_rate=1e-5), "Adam 1e-5")]:
                 candidate = BoundedMesh.copy_mesh(mesh_backup)
                 opt1 = BoundedBilevelOptimizer()
@@ -142,7 +142,7 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                 opt1.inner_solver        = solver
                 opt1.update_T1           = True
                 opt1._update_T1_func     = update_T1_bounded
-                opt1.min_dist_T1         = 0.05
+                opt1.min_dist_T1         = 0.08
                 opt1.max_nb_iterations   = max_opt_iter
                 opt1.tolerance           = 1e-6
                 opt1.patience            = 50
@@ -166,19 +166,27 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
             opt_outer = BoundedBilevelOptimizer()
             opt_outer.loss_function_inner = energy_adaptive
             opt_outer.loss_function_outer = outer_loss_homogenise
-            opt_outer.inner_solver        = optax.adam(learning_rate=optax.cosine_decay_schedule(1e-3, 200))
+            opt_outer.inner_solver        = optax.adam(learning_rate=optax.cosine_decay_schedule(5e-4, 200))
             opt_outer.outer_solver        = optax.chain(
                 optax.clip_by_global_norm(1.0),
                 optax.adam(learning_rate=1e-4),
             )
             opt_outer.update_T1           = True
             opt_outer._update_T1_func     = update_T1_bounded
-            opt_outer.min_dist_T1         = 0.05
+            opt_outer.min_dist_T1         = 0.08
             opt_outer.max_nb_iterations   = 200
             opt_outer.tolerance           = 1e-6
             opt_outer.patience            = 20
+            # Clip bounds for face_params (area targets): allow ±50% around the mean target
+            target_area = total_area / mesh_opt.nb_faces
+            fp_min = jnp.float64(target_area * 0.5)
+            fp_max = jnp.float64(target_area * 1.5)
+
             for epoch in range(n_outer_epochs):
                 opt_outer.bilevel_optimization(mesh_opt)
+                # Prevent face_params from drifting to degenerate values
+                mesh_opt.faces_params = jnp.clip(mesh_opt.faces_params, fp_min, fp_max)
+
             if np.any(np.isnan(np.array(mesh_opt.vertices))):
                 print("Outer optimisation diverged (NaN vertices) — reverting to pre-outer mesh.")
                 mesh_opt = mesh_pre_outer
