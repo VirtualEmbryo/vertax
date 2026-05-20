@@ -1,6 +1,5 @@
 """
-Visualisation du tissu, du spindle et des divisions cellulaires.
-Meme affichage que inverse_modelling_example_bounded.ipynb (cellule 24).
+Visualisation utilities for the tissue, spindle, and cell divisions.
 """
 
 import numpy as np
@@ -13,12 +12,12 @@ from vertax import BoundedMesh, plot_mesh, get_plot_mesh, EdgePlot, FacePlot, Ve
 from mesh_utils import get_face_polygon, polygon_centroid
 from spindle_model import _ray_segment_length_jax
 
-MIN_AREA = 0.01  # faces en dessous de ce seuil ignorées dans les figures
-ANG_MAX  = np.pi / 2 - 0.01  # angle max des arcs de bord pour éviter les artefacts visuels
+MIN_AREA = 0.01  # faces below this threshold are ignored in figures
+ANG_MAX  = np.pi / 2 - 0.01  # max arc angle to avoid visual artefacts at boundaries
 
 
 def _clip_angles(mesh: BoundedMesh) -> BoundedMesh:
-    """Retourne une copie du mesh avec les angles de bord clippés pour le rendu."""
+    """Return a copy of the mesh with edge angles clipped for rendering."""
     m = BoundedMesh.copy_mesh(mesh)
     m.angles = jnp.clip(m.angles, 0.017, ANG_MAX)
     return m
@@ -26,7 +25,7 @@ def _clip_angles(mesh: BoundedMesh) -> BoundedMesh:
 
 
 def _add_cell_labels(ax, mesh):
-    """Ajoute le numéro de chaque cellule à son centroïde, ignore les faces dégénérées."""
+    """Add each cell's index at its centroid; degenerate faces are silently skipped."""
     areas = np.array(mesh.get_area(jnp.arange(mesh.nb_faces)))
     for fid in range(mesh.nb_faces):
         if areas[fid] < MIN_AREA:

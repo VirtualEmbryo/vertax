@@ -7,6 +7,8 @@ L(θ) and the local membrane tension Λ(θ):
 
     dF(θ) = Λ(θ) · L(θ) · ê(θ) · dθ
 
+--- Method 1 : Newton-Raphson (method='newton') ---
+
 Spindle equilibrium (c, φ) is the condition:
 
     F₁ + F₂ = 0   (force balance, 2 scalar equations)
@@ -14,12 +16,33 @@ Spindle equilibrium (c, φ) is the condition:
 
 solved by Newton-Raphson with exact Jacobian (JAX automatic differentiation).
 
+--- Method 2 : Probability density (method='pdf' or 'pdf_sample') ---
+
+Following Thery et al., the orientational potential is:
+
+    V̄(α) = −∫₀^α T̄(α') dα'
+
+where T̄(α) is the normalised net torque at spindle orientation α (centrosome
+centre fixed at the polygon centroid).
+
+The probability density over orientations α ∈ [0, π] is:
+
+    p(α) = p₀ exp(−V̄(α) / C)
+
+with C a noise parameter (larger C → flatter distribution).
+
+- 'pdf'        : uses the mode of p(α) as the division axis.
+- 'pdf_sample' : draws the division axis at random from p(α).
+
 Contains:
-  - _ray_segment_length_jax : microtubule length to a segment
-  - _centrosome_force_jax   : force and moment of one centrosome (Gauss quadrature)
-  - _make_residual           : builds the residual vector R(cx, cy, φ)
-  - _newton                  : Newton-Raphson solver
-  - find_spindle             : public API — finds (c, u, c1, c2)
+  - _ray_segment_length_jax   : microtubule length to a segment
+  - _centrosome_force_jax     : force and moment of one centrosome (Gauss quadrature)
+  - _torque_at_angle          : net moment M₁ + M₂ at a fixed spindle orientation α
+  - spindle_orientation_pdf   : compute p(α) curve over α ∈ [0, π]
+  - _make_residual             : builds the residual vector R(cx, cy, φ)
+  - _newton                    : Newton-Raphson solver
+  - find_spindle               : public API — finds (c, u, c1, c2)
+                                 method ∈ {'newton', 'pdf', 'pdf_sample'}
 """
 
 import numpy as np
@@ -140,6 +163,84 @@ def _centrosome_force_jax(centrosome: jax.Array,
     return Fs.sum(axis=0), Ms.sum()
 
 
+def _torque_at_angle(alpha: float,
+                     centroid: np.ndarray,
+                     v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
+                     d: float,
+                     gauss_xi: jax.Array, gauss_wi: jax.Array) -> float:
+    """Net torque M₁ + M₂ for a spindle centred at centroid with orientation α.
+
+    The spindle axis is u = (cos α, sin α).  The two centrosomes are placed at
+    c ± d·u.  Only the moment balance is evaluated (torque about the origin).
+    """
+    c  = jnp.array(centroid, dtype=jnp.float64)
+    u  = jnp.array([jnp.cos(alpha), jnp.sin(alpha)], dtype=jnp.float64)
+    d_jax = jnp.float64(d)
+    _, M1 = _centrosome_force_jax(c + d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi)
+    _, M2 = _centrosome_force_jax(c - d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi)
+    return float(M1 + M2)
+
+
+def spindle_orientation_pdf(
+        centroid: np.ndarray,
+        v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
+        d: float,
+        C: float = 0.1,
+        n_alpha: int = 180,
+        n_gauss: int = 12,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute the Boltzmann-like probability density p(α) over α ∈ [0, π].
+
+    Following Thery et al., the orientational potential is:
+
+        V̄(α) = −∫₀^α T̄(α') dα'
+
+    where T̄(α') = T(α') / (r_N · F₀) is the normalised net torque.
+    Since r_N and F₀ are scale factors shared by all angles, normalisation of
+    the torque cancels in the exponential and we can use the raw torque T(α)
+    directly:
+
+        V(α) = −∫₀^α T(α') dα'
+        p(α) ∝ exp(−V(α) / C)
+
+    The integral is approximated by the trapezoidal rule on a uniform grid of
+    n_alpha points in [0, π].
+
+    Parameters
+    ----------
+    centroid  : spindle centre (2,)
+    v0s, v1s  : segment endpoints (N, 2)
+    tensions  : membrane tensions (N,)
+    d         : centrosome half-separation
+    C         : noise parameter (default 0.1); larger C → flatter distribution
+    n_alpha   : number of orientation samples in [0, π]
+    n_gauss   : Gauss-Legendre quadrature order for _centrosome_force_jax
+
+    Returns
+    -------
+    alphas : (n_alpha,) angles in [0, π]
+    p      : (n_alpha,) normalised probability density
+    """
+    xi, wi = np.polynomial.legendre.leggauss(n_gauss)
+    gauss_xi = jnp.array(xi, dtype=jnp.float64)
+    gauss_wi = jnp.array(wi, dtype=jnp.float64)
+
+    alphas = np.linspace(0.0, np.pi, n_alpha)
+    torques = np.array([
+        _torque_at_angle(a, centroid, v0s, v1s, tensions, d, gauss_xi, gauss_wi)
+        for a in alphas
+    ])
+
+    # Potential V(α) = −∫₀^α T(α') dα'  (trapezoidal rule)
+    V = -np.cumsum(np.concatenate([[0.0], 0.5 * (torques[:-1] + torques[1:]) * np.diff(alphas)]))
+
+    # Boltzmann distribution; subtract V.min() for numerical stability
+    log_p = -(V - V.min()) / C
+    p = np.exp(log_p)
+    p /= np.trapz(p, alphas)   # normalise so ∫p dα = 1
+    return alphas, p
+
+
 def _make_residual(v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
                    d: float, n_gauss: int = 12):
     """Build the spindle equilibrium residual function (JIT-compiled).
@@ -200,27 +301,43 @@ def _newton(residual, x0: np.ndarray, max_iter: int = 30,
 
 def find_spindle(face_id: int, mesh: BoundedMesh,
                  d_fraction: float = 0.3,
-                 n_gauss: int = 12) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                 n_gauss: int = 12,
+                 method: str = 'newton',
+                 pdf_C: float = 0.1,
+                 pdf_n_alpha: int = 180,
+                 rng: np.random.Generator | None = None,
+                 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Find the equilibrium position of the mitotic spindle in cell face_id.
 
-    Initialisation:
-      - Centre c₀  : polygon centroid (Green's formula).
-      - Axis u₀    : principal inertia axis (direction of maximum elongation).
-      - Half-length: d = d_fraction · mean_radius, where mean_radius is the
-        mean distance from the centroid to the boundary vertices.
+    Parameters
+    ----------
+    face_id    : face index in the mesh
+    mesh       : BoundedMesh
+    d_fraction : centrosome half-separation as a fraction of the mean cell radius
+    n_gauss    : Gauss-Legendre quadrature order
+    method     : one of
+                   'newton'     — Newton-Raphson on F₁+F₂=0, M₁+M₂=0 (default)
+                   'pdf'        — mode of p(α) = p₀ exp(−V̄(α)/C)
+                   'pdf_sample' — random draw from p(α) = p₀ exp(−V̄(α)/C)
+    pdf_C      : noise parameter C for the PDF methods (default 0.1)
+    pdf_n_alpha: number of orientation samples for PDF methods (default 180)
+    rng        : numpy random generator for 'pdf_sample' (uses default if None)
 
-    Resolution:
-      Newton-Raphson on the residual (F₁+F₂, M₁+M₂) until convergence.
-      Falls back to (c₀, u₀) if Newton diverges or places the centre outside
-      the cell polygon.
+    The spindle centre is always fixed at the polygon centroid.
+    In 'newton' mode, the centre can shift from the centroid during Newton
+    iterations (the full 3-DOF problem is solved); in 'pdf' and 'pdf_sample'
+    modes the centre is kept at the centroid.
 
-    Returns:
-      c  : spindle centre (2,)
-      u  : spindle axis, unit vector (2,)
-      c1 : centrosome 1 position = c + d·u (2,)
-      c2 : centrosome 2 position = c − d·u (2,)
+    Falls back to (centroid, inertia axis) if the chosen method fails.
+
+    Returns
+    -------
+    c  : spindle centre (2,)
+    u  : spindle axis, unit vector (2,)
+    c1 : centrosome 1 position = c + d·u (2,)
+    c2 : centrosome 2 position = c − d·u (2,)
     """
-    poly        = get_face_polygon(face_id, mesh)
+    poly = get_face_polygon(face_id, mesh)
 
     if np.any(np.isnan(poly)) or len(poly) < 3:
         raise ValueError(f"Cell {face_id} has a degenerate polygon (NaN or < 3 vertices).")
@@ -232,32 +349,57 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
         raise ValueError(f"Cell {face_id} has zero area (degenerate polygon).")
     u0   = _inertia_axis(poly, c0)
     phi0 = np.arctan2(u0[1], u0[0])
-    # d = fraction du rayon moyen de la cellule, pour rester à l'intérieur
     d    = float(d_fraction * np.mean(np.linalg.norm(poly - c0, axis=1)))
 
     from matplotlib.path import Path
     poly_path = Path(poly)
 
-    residual = _make_residual(v0s, v1s, tensions, d, n_gauss)
-    params, res_norm = _newton(residual, np.array([c0[0], c0[1], phi0]))
+    if method == 'newton':
+        residual = _make_residual(v0s, v1s, tensions, d, n_gauss)
+        params, res_norm = _newton(residual, np.array([c0[0], c0[1], phi0]))
 
-    fallback = False
-    if np.any(np.isnan(params)) or np.any(np.isinf(params)):
-        fallback = True
-    else:
-        cx, cy, phi = params
-        c = np.array([cx, cy])
-        if not poly_path.contains_point(c):
+        fallback = False
+        if np.any(np.isnan(params)) or np.any(np.isinf(params)):
             fallback = True
+        else:
+            cx, cy, phi = params
+            c = np.array([cx, cy])
+            if not poly_path.contains_point(c):
+                fallback = True
 
-    if fallback:
-        # Newton diverged or placed the center outside the cell: fall back to
-        # the geometric centroid with the inertia axis as the division direction.
-        c   = c0
-        phi = phi0
-        print(f"Cell {face_id} — spindle (fallback to geometric centroid)")
+        if fallback:
+            c   = c0
+            phi = phi0
+            print(f"Cell {face_id} — spindle (fallback to geometric centroid)")
+        else:
+            print(f"Cell {face_id} — spindle (newton)")
+
+        if not fallback:
+            print(f"  Residual  : {res_norm:.2e}")
+
+    elif method in ('pdf', 'pdf_sample'):
+        try:
+            alphas, p = spindle_orientation_pdf(
+                c0, v0s, v1s, tensions, d,
+                C=pdf_C, n_alpha=pdf_n_alpha, n_gauss=n_gauss,
+            )
+            if method == 'pdf':
+                phi = float(alphas[np.argmax(p)])
+                print(f"Cell {face_id} — spindle (pdf mode, α={np.degrees(phi):.1f}°)")
+            else:
+                rng = rng or np.random.default_rng()
+                # sample from the discrete distribution
+                p_norm = p / p.sum()
+                phi = float(rng.choice(alphas, p=p_norm))
+                print(f"Cell {face_id} — spindle (pdf sample, α={np.degrees(phi):.1f}°)")
+        except Exception as e:
+            phi = phi0
+            print(f"Cell {face_id} — spindle (pdf fallback: {e})")
+        c = c0
+        fallback = False   # centre stays at centroid, no additional check needed
+
     else:
-        print(f"Cell {face_id} — spindle")
+        raise ValueError(f"Unknown method '{method}'. Choose 'newton', 'pdf', or 'pdf_sample'.")
 
     cx, cy = float(c[0]), float(c[1])
     u  = np.array([np.cos(phi), np.sin(phi)])
@@ -265,6 +407,4 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
 
     print(f"  Center    : ({cx:.4f}, {cy:.4f})")
     print(f"  Axis u    : ({u[0]:.4f}, {u[1]:.4f})")
-    if not fallback:
-        print(f"  Residual  : {res_norm:.2e}")
     return c, u, c1, c2

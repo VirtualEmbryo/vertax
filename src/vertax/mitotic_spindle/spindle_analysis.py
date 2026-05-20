@@ -35,7 +35,10 @@ from cell_division import divide_cell
 
 
 
-def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int) -> int:
+def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int,
+               spindle_method: str = 'newton',
+               spindle_pdf_C: float = 0.1,
+               spindle_rng: np.random.Generator | None = None) -> int:
     """Randomly select a cell and verify that division is feasible.
 
     Tries cells in random order and returns the first one for which
@@ -55,7 +58,10 @@ def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int) -> int:
             print(f"  Cell {fid} skipped: area {areas[fid]:.4f} < min {min_area:.4f}")
             continue
         try:
-            c_test, u_test, _, _ = find_spindle(fid, mesh, d_fraction, n_gauss)
+            c_test, u_test, _, _ = find_spindle(
+                fid, mesh, d_fraction, n_gauss,
+                method=spindle_method, pdf_C=spindle_pdf_C, rng=spindle_rng,
+            )
             divide_cell(mesh, fid, c_test, u_test)
             return fid
         except ValueError as e:
@@ -70,7 +76,11 @@ def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int) -> int:
 def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                     d_fraction: float = 0.3, n_gauss: int = 12,
                     max_opt_iter: int = 5000,
-                    n_outer_epochs: int = 3) -> tuple[BoundedMesh, list[BoundedMesh]]:
+                    n_outer_epochs: int = 3,
+                    spindle_method: str = 'newton',
+                    spindle_pdf_C: float = 0.1,
+                    spindle_rng: np.random.Generator | None = None,
+                    ) -> tuple[BoundedMesh, list[BoundedMesh]]:
     """Perform n_divisions successive cell divisions.
 
     For each division:
@@ -93,10 +103,16 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
         print(f"\n{'='*50}")
         print(f"Division {i + 1}/{n_divisions}")
 
-        fid = _pick_face(current, d_fraction, n_gauss)
+        fid = _pick_face(current, d_fraction, n_gauss,
+                         spindle_method=spindle_method,
+                         spindle_pdf_C=spindle_pdf_C,
+                         spindle_rng=spindle_rng)
         print(f"Selected cell: {fid}")
 
-        c, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss)
+        c, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss,
+                                  method=spindle_method,
+                                  pdf_C=spindle_pdf_C,
+                                  rng=spindle_rng)
         mesh_post, _ = divide_cell(current, fid, c, u)
 
         mesh_opt = BoundedMesh.copy_mesh(mesh_post)
@@ -115,10 +131,10 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
             mesh_backup = BoundedMesh.copy_mesh(mesh_opt)
 
             schedule = optax.warmup_cosine_decay_schedule(
-                init_value=0.0, peak_value=1e-3,
+                init_value=0.0, peak_value=5e-4,
                 warmup_steps=200, decay_steps=max_opt_iter, end_value=1e-6)
             for solver, label in [(optax.adam(learning_rate=schedule), "Adam warmup-cosine"),
-                                  (optax.adam(learning_rate=1e-4), "Adam 1e-4"),
+                                  (optax.adam(learning_rate=5e-5), "Adam 5e-5"),
                                   (optax.adam(learning_rate=1e-5), "Adam 1e-5")]:
                 candidate = BoundedMesh.copy_mesh(mesh_backup)
                 opt1 = BoundedBilevelOptimizer()
@@ -126,7 +142,7 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                 opt1.inner_solver        = solver
                 opt1.update_T1           = True
                 opt1._update_T1_func     = update_T1_bounded
-                opt1.min_dist_T1         = 0.01
+                opt1.min_dist_T1         = 0.05
                 opt1.max_nb_iterations   = max_opt_iter
                 opt1.tolerance           = 1e-6
                 opt1.patience            = 50
@@ -157,7 +173,7 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
             )
             opt_outer.update_T1           = True
             opt_outer._update_T1_func     = update_T1_bounded
-            opt_outer.min_dist_T1         = 0.01
+            opt_outer.min_dist_T1         = 0.05
             opt_outer.max_nb_iterations   = 200
             opt_outer.tolerance           = 1e-6
             opt_outer.patience            = 20

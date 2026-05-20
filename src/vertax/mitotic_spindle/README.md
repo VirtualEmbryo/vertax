@@ -8,12 +8,24 @@ Simulation of successive mitotic cell divisions on a 2D epithelial tissue using 
 
 `bounded_division` takes the division axis as an **input parameter** — it does not determine it.
 
-We implement a full biophysical model (`spindle_model.py`):
+We implement a full biophysical model (`spindle_model.py`) with three selectable methods (`method` parameter of `find_spindle`):
+
+**`method='newton'` (default)** — full 3-DOF equilibrium:
 - Each centrosome emits microtubules in all directions θ ∈ [0, 2π]
 - Elementary force: dF(θ) = Λ(θ) · L(θ) · ê(θ) · dθ
 - Spindle equilibrium (c, φ) found by solving F₁ + F₂ = 0, M₁ + M₂ = 0 via Newton-Raphson with JAX automatic differentiation
 - Initialisation: geometric centroid + principal inertia axis
 - Fallback to (centroid, inertia axis) if Newton diverges or places the centre outside the cell
+
+**`method='pdf'`** — Boltzmann orientation density (Thery et al.):
+- The orientational potential is V̄(α) = −∫₀^α T̄(α') dα', where T̄(α) is the net torque at orientation α with the spindle centred at the geometric centroid
+- The probability density p(α) = p₀ exp(−V̄(α)/C) is computed over α ∈ [0, π] (trapezoidal integration, 180 samples)
+- The division axis is the **mode** of p(α) — the most probable orientation
+- C (`pdf_C`) is a noise parameter: small → peaked near equilibrium, large → nearly uniform
+
+**`method='pdf_sample'`** — stochastic draw from p(α):
+- Same density as `'pdf'`, but the division axis is **randomly sampled** from p(α)
+- Models the stochastic variability observed experimentally (thermal noise + nuclear friction)
 
 ### 2. Arc intersection detection
 
@@ -59,17 +71,19 @@ We implement `energy_adaptive` which reads the target area from `face_params[0]`
 ## Pipeline
 
 ```
-find_spindle          →  physical spindle equilibrium (Newton-Raphson)
+find_spindle          →  spindle axis: Newton-Raphson | PDF mode | PDF sample
 divide_cell           →  half-edge topology surgery (NumPy)
-inner_optimization    →  mechanical relaxation (Adam with cosine decay)
+inner_optimization    →  mechanical relaxation (Adam with cosine decay, lr ≤ 5e-4)
 bilevel_optimization  →  area homogenisation (outer loss on he_params, face_params)
 ```
+
+The `spindle_method` parameter of `run_n_divisions` selects the axis-finding strategy for all divisions in a run.
 
 ## Files
 
 | File | Role |
 |------|------|
-| `spindle_model.py` | Microtubule force model and Newton-Raphson solver |
+| `spindle_model.py` | Microtubule force model, Newton-Raphson solver, PDF orientation density |
 | `cell_division.py` | Half-edge topology surgery for cell division |
 | `energy_adaptive.py` | Adaptive inner energy + outer homogenisation loss |
 | `mesh_utils.py` | Polygon geometry utilities (centroid, inertia axis) |
