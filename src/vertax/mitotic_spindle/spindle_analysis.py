@@ -32,13 +32,57 @@ from vertax.topo import update_T1_bounded
 from energy_adaptive import energy_adaptive, outer_loss_homogenise
 from spindle_model import find_spindle
 from cell_division import divide_cell
+from mesh_utils import get_cell_segments
 
+
+def _compute_polarity(mesh: BoundedMesh) -> tuple[np.ndarray, np.ndarray]:
+    """Compute each cell's polarity axis from the mechanical tension field.
+
+    The polarity axis φ_f is the principal axis of the tension-weighted
+    edge-direction tensor:
+
+        T_f = Σ_{e ∈ f}  tension_e · (ê_e ⊗ ê_e)
+
+    where ê_e = (v1 - v0) / |v1 - v0| is the unit direction of edge e and
+    tension_e = sigmoid(he_params_e) + 1.
+
+    The principal axis is the eigenvector of T_f associated with its largest
+    eigenvalue — the direction along which the cell is most strongly pulled.
+
+    Returns
+    -------
+    polarity_phi      : (nb_faces,) principal axis angle in radians for each cell
+    polarity_strength : constant array of zeros — caller sets the desired strength
+    """
+    polarity_phi = np.zeros(mesh.nb_faces)
+    for fid in range(mesh.nb_faces):
+        try:
+            v0s, v1s, tensions = get_cell_segments(fid, mesh)
+        except Exception:
+            continue
+        v0s_np = np.array(v0s)
+        v1s_np = np.array(v1s)
+        tensions_np = np.array(tensions)
+        T = np.zeros((2, 2))
+        for v0, v1, t in zip(v0s_np, v1s_np, tensions_np):
+            e = v1 - v0
+            norm = np.linalg.norm(e)
+            if norm < 1e-12:
+                continue
+            e_hat = e / norm
+            T += t * np.outer(e_hat, e_hat)
+        # Principal axis = eigenvector for largest eigenvalue
+        eigvals, eigvecs = np.linalg.eigh(T)
+        polarity_phi[fid] = float(np.arctan2(eigvecs[1, -1], eigvecs[0, -1]))
+    return polarity_phi
 
 
 def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int,
                spindle_method: str = 'newton',
                spindle_pdf_C: float = 0.1,
-               spindle_rng: np.random.Generator | None = None) -> int:
+               spindle_rng: np.random.Generator | None = None,
+               polarity_phi: np.ndarray | None = None,
+               polarity_strength: float = 0.0) -> int:
     """Randomly select a cell and verify that division is feasible.
 
     Tries cells in random order and returns the first one for which
@@ -58,9 +102,11 @@ def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int,
             print(f"  Cell {fid} skipped: area {areas[fid]:.4f} < min {min_area:.4f}")
             continue
         try:
+            phi = float(polarity_phi[fid]) if polarity_phi is not None else 0.0
             c_test, u_test, _, _ = find_spindle(
                 fid, mesh, d_fraction, n_gauss,
                 method=spindle_method, pdf_C=spindle_pdf_C, rng=spindle_rng,
+                polarity_phi=phi, polarity_strength=polarity_strength,
             )
             divide_cell(mesh, fid, c_test, u_test)
             return fid
@@ -80,14 +126,20 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                     spindle_method: str = 'newton',
                     spindle_pdf_C: float = 0.1,
                     spindle_rng: np.random.Generator | None = None,
+                    polarity_strength: float = 0.0,
                     ) -> tuple[BoundedMesh, list[BoundedMesh]]:
     """Perform n_divisions successive cell divisions.
 
     For each division:
-      1. Randomly select a divisible cell.
-      2. Compute the mitotic spindle (find_spindle).
-      3. Topological division (divide_cell).
-      4. Mechanical relaxation with T1 transitions (BoundedBilevelOptimizer).
+      1. Compute cell polarity axes from the current tension field.
+      2. Randomly select a divisible cell.
+      3. Compute the mitotic spindle (find_spindle), biased by polarity.
+      4. Topological division (divide_cell).
+      5. Mechanical relaxation with T1 transitions (BoundedBilevelOptimizer).
+
+    polarity_strength : p ∈ [0, 1] — how strongly the tension-derived polarity
+        axis biases the spindle orientation. 0 = geometry only (default),
+        1 = polarity doubles microtubule density along the principal tension axis.
 
     Returns (final_mesh, snapshots) where snapshots is a list of (mesh_post, mesh_opt)
     pairs — one per division — with mesh_post the topology right after division and
@@ -103,16 +155,27 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
         print(f"\n{'='*50}")
         print(f"Division {i + 1}/{n_divisions}")
 
+        # Polarity axes from the current mechanical state (zero cost if p=0)
+        polarity_phi = _compute_polarity(current) if polarity_strength > 0 else None
+
         fid = _pick_face(current, d_fraction, n_gauss,
                          spindle_method=spindle_method,
                          spindle_pdf_C=spindle_pdf_C,
-                         spindle_rng=spindle_rng)
+                         spindle_rng=spindle_rng,
+                         polarity_phi=polarity_phi,
+                         polarity_strength=polarity_strength)
         print(f"Selected cell: {fid}")
+
+        phi = float(polarity_phi[fid]) if polarity_phi is not None else 0.0
+        if polarity_strength > 0:
+            print(f"  Polarity  : φ={np.degrees(phi):.1f}°  p={polarity_strength:.2f}")
 
         c, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss,
                                   method=spindle_method,
                                   pdf_C=spindle_pdf_C,
-                                  rng=spindle_rng)
+                                  rng=spindle_rng,
+                                  polarity_phi=phi,
+                                  polarity_strength=polarity_strength)
         mesh_post, _ = divide_cell(current, fid, c, u)
 
         mesh_opt = BoundedMesh.copy_mesh(mesh_post)
@@ -192,6 +255,10 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                 mesh_opt = mesh_pre_outer
             else:
                 print(f"Outer optimisation: {n_outer_epochs} epochs done")
+
+        # After division, recalculate polarity from the relaxed mesh for the
+        # next iteration — no explicit inheritance needed since _compute_polarity
+        # always reads from the current tension field.
 
         current = mesh_opt
         snapshots.append((BoundedMesh.copy_mesh(mesh_post), BoundedMesh.copy_mesh(current)))

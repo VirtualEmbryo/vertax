@@ -1,9 +1,15 @@
 """
 Physical model of the mitotic spindle and equilibrium solver.
 
-Each centrosome emits microtubules uniformly over all angles (θ ∈ [0, 2π]).
-A microtubule in direction ê(θ) exerts a force proportional to its length
-L(θ) and the local membrane tension Λ(θ):
+Each centrosome emits microtubules in all directions θ ∈ [0, 2π] with an
+angular density Λ(θ) that combines local membrane tension and cell polarity:
+
+    Λ(θ) = tension_j · (1 + p · cos²(θ − φ))
+
+where φ is the cell polarity axis and p ∈ [0, 1] the polarity strength.
+For p = 0 the model reduces to the original uniform-density case.
+
+The microtubule force is:
 
     dF(θ) = Λ(θ) · L(θ) · ê(θ) · dθ
 
@@ -88,6 +94,8 @@ def _ray_segment_length_jax(origin: jax.Array, direction: jax.Array,
 def _centrosome_force_jax(centrosome: jax.Array,
                           v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
                           gauss_xi: jax.Array, gauss_wi: jax.Array,
+                          polarity_phi: jax.Array = jnp.float64(0.0),
+                          polarity_strength: jax.Array = jnp.float64(0.0),
                           ) -> tuple[jax.Array, jax.Array]:
     """Compute the total force and moment exerted by one centrosome.
 
@@ -151,7 +159,8 @@ def _centrosome_force_jax(centrosome: jax.Array,
             # Gauss-point contribution to force and moment:
             #   dF = Λ · L · ê · w · (Δα/2)
             #   dM = (r × dF) = (contact × dF), 2-D scalar cross product
-            dF  = tension * L * direction * gauss_wi[g_idx] * half_da
+            polarity_bias = 1.0 + polarity_strength * jnp.cos(theta - polarity_phi) ** 2
+            dF  = tension * polarity_bias * L * direction * gauss_wi[g_idx] * half_da
             dM  = contact[0] * dF[1] - contact[1] * dF[0]
             valid = jnp.isfinite(L)   # ignore directions with no intersection
             return jnp.where(valid, dF, jnp.zeros(2)), jnp.where(valid, dM, 0.0)
@@ -167,7 +176,9 @@ def _torque_at_angle(alpha: float,
                      centroid: np.ndarray,
                      v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
                      d: float,
-                     gauss_xi: jax.Array, gauss_wi: jax.Array) -> float:
+                     gauss_xi: jax.Array, gauss_wi: jax.Array,
+                     polarity_phi: float = 0.0,
+                     polarity_strength: float = 0.0) -> float:
     """Net torque M₁ + M₂ for a spindle centred at centroid with orientation α.
 
     The spindle axis is u = (cos α, sin α).  The two centrosomes are placed at
@@ -176,8 +187,10 @@ def _torque_at_angle(alpha: float,
     c  = jnp.array(centroid, dtype=jnp.float64)
     u  = jnp.array([jnp.cos(alpha), jnp.sin(alpha)], dtype=jnp.float64)
     d_jax = jnp.float64(d)
-    _, M1 = _centrosome_force_jax(c + d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi)
-    _, M2 = _centrosome_force_jax(c - d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi)
+    pp = jnp.float64(polarity_phi)
+    ps = jnp.float64(polarity_strength)
+    _, M1 = _centrosome_force_jax(c + d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps)
+    _, M2 = _centrosome_force_jax(c - d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps)
     return float(M1 + M2)
 
 
@@ -188,6 +201,8 @@ def spindle_orientation_pdf(
         C: float = 0.1,
         n_alpha: int = 180,
         n_gauss: int = 12,
+        polarity_phi: float = 0.0,
+        polarity_strength: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute the Boltzmann-like probability density p(α) over α ∈ [0, π].
 
@@ -227,7 +242,8 @@ def spindle_orientation_pdf(
 
     alphas = np.linspace(0.0, np.pi, n_alpha)
     torques = np.array([
-        _torque_at_angle(a, centroid, v0s, v1s, tensions, d, gauss_xi, gauss_wi)
+        _torque_at_angle(a, centroid, v0s, v1s, tensions, d, gauss_xi, gauss_wi,
+                         polarity_phi, polarity_strength)
         for a in alphas
     ])
 
@@ -242,7 +258,8 @@ def spindle_orientation_pdf(
 
 
 def _make_residual(v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
-                   d: float, n_gauss: int = 12):
+                   d: float, n_gauss: int = 12,
+                   polarity_phi: float = 0.0, polarity_strength: float = 0.0):
     """Build the spindle equilibrium residual function (JIT-compiled).
 
     The residual is the 3-component vector we set to zero to find equilibrium:
@@ -260,14 +277,16 @@ def _make_residual(v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
     xi, wi = np.polynomial.legendre.leggauss(n_gauss)
     gauss_xi = jnp.array(xi, dtype=jnp.float64)
     gauss_wi = jnp.array(wi, dtype=jnp.float64)
+    pp = jnp.float64(polarity_phi)
+    ps = jnp.float64(polarity_strength)
 
     @jax.jit
     def residual(params: jax.Array) -> jax.Array:
         cx, cy, phi = params[0], params[1], params[2]
         c  = jnp.array([cx, cy])
         u  = jnp.array([jnp.cos(phi), jnp.sin(phi)])
-        F1, M1 = _centrosome_force_jax(c + d * u, v0s, v1s, tensions, gauss_xi, gauss_wi)
-        F2, M2 = _centrosome_force_jax(c - d * u, v0s, v1s, tensions, gauss_xi, gauss_wi)
+        F1, M1 = _centrosome_force_jax(c + d * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps)
+        F2, M2 = _centrosome_force_jax(c - d * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps)
         return jnp.array([F1[0] + F2[0], F1[1] + F2[1], M1 + M2])
 
     return residual
@@ -306,22 +325,31 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
                  pdf_C: float = 0.1,
                  pdf_n_alpha: int = 180,
                  rng: np.random.Generator | None = None,
+                 polarity_phi: float = 0.0,
+                 polarity_strength: float = 0.0,
                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Find the equilibrium position of the mitotic spindle in cell face_id.
 
     Parameters
     ----------
-    face_id    : face index in the mesh
-    mesh       : BoundedMesh
-    d_fraction : centrosome half-separation as a fraction of the mean cell radius
-    n_gauss    : Gauss-Legendre quadrature order
-    method     : one of
-                   'newton'     — Newton-Raphson on F₁+F₂=0, M₁+M₂=0 (default)
-                   'pdf'        — mode of p(α) = p₀ exp(−V̄(α)/C)
-                   'pdf_sample' — random draw from p(α) = p₀ exp(−V̄(α)/C)
-    pdf_C      : noise parameter C for the PDF methods (default 0.1)
-    pdf_n_alpha: number of orientation samples for PDF methods (default 180)
-    rng        : numpy random generator for 'pdf_sample' (uses default if None)
+    face_id           : face index in the mesh
+    mesh              : BoundedMesh
+    d_fraction        : centrosome half-separation as a fraction of the mean cell radius
+    n_gauss           : Gauss-Legendre quadrature order
+    method            : one of
+                          'newton'     — Newton-Raphson on F₁+F₂=0, M₁+M₂=0 (default)
+                          'pdf'        — mode of p(α) = p₀ exp(−V̄(α)/C)
+                          'pdf_sample' — random draw from p(α) = p₀ exp(−V̄(α)/C)
+    pdf_C             : noise parameter C for the PDF methods (default 0.1)
+    pdf_n_alpha       : number of orientation samples for PDF methods (default 180)
+    rng               : numpy random generator for 'pdf_sample' (uses default if None)
+    polarity_phi      : cell polarity axis angle in radians (default 0 = no effect)
+    polarity_strength : polarity bias strength p ∈ [0, 1]; 0 = geometry-only,
+                        1 = polarity doubles the microtubule density along φ
+                        without suppressing it in other directions (default 0)
+
+    The angular density of microtubules is modulated as:
+        Λ(θ) = tension_j · (1 + polarity_strength · cos²(θ − polarity_phi))
 
     The spindle centre is always fixed at the polygon centroid.
     In 'newton' mode, the centre can shift from the centroid during Newton
@@ -355,7 +383,8 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
     poly_path = Path(poly)
 
     if method == 'newton':
-        residual = _make_residual(v0s, v1s, tensions, d, n_gauss)
+        residual = _make_residual(v0s, v1s, tensions, d, n_gauss,
+                                  polarity_phi, polarity_strength)
         params, res_norm = _newton(residual, np.array([c0[0], c0[1], phi0]))
 
         fallback = False
@@ -382,6 +411,7 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
             alphas, p = spindle_orientation_pdf(
                 c0, v0s, v1s, tensions, d,
                 C=pdf_C, n_alpha=pdf_n_alpha, n_gauss=n_gauss,
+                polarity_phi=polarity_phi, polarity_strength=polarity_strength,
             )
             if method == 'pdf':
                 phi = float(alphas[np.argmax(p)])
