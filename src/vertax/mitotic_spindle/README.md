@@ -11,7 +11,7 @@ Simulation of successive mitotic cell divisions on a 2D epithelial tissue using 
 We implement a full biophysical model (`spindle_model.py`) with three selectable methods (`method` parameter of `find_spindle`):
 
 **`method='newton'` (default)** — full 3-DOF equilibrium:
-- Each centrosome emits microtubules in all directions θ ∈ [0, 2π]
+- Each centrosome emits microtubules in all directions θ ∈ [0, 2π] with density Λ(θ)
 - Elementary force: dF(θ) = Λ(θ) · L(θ) · ê(θ) · dθ
 - Spindle equilibrium (c, φ) found by solving F₁ + F₂ = 0, M₁ + M₂ = 0 via Newton-Raphson with JAX automatic differentiation
 - Initialisation: geometric centroid + principal inertia axis
@@ -74,7 +74,29 @@ The standard VertAX inner energy uses a fixed `TARGET_AREA` constant.
 
 We implement `energy_adaptive` which reads the target area from `face_params[0]`, updated after each division to `initial_total_area / nb_faces`. This ensures the mechanical equilibrium target scales correctly as the number of cells grows.
 
-### 7. Outer loss clipping (our contribution)
+### 7. Cell polarity bias on spindle orientation (our contribution)
+
+Cell polarity is derived from the mechanical tension field after each relaxation. The principal axis of the tension-weighted edge-direction tensor:
+
+```
+T_f = Σ_{e ∈ f}  tension_e · (ê_e ⊗ ê_e)
+```
+
+gives each cell a polarity axis φ_f — the direction along which it is most strongly pulled by its junctions.
+
+This polarity biases the microtubule density without fully controlling it:
+
+```
+Λ(θ) = tension_j · (1 + p · cos²(θ − φ_f))
+```
+
+where `p = polarity_strength ∈ [0, 1]`. At `p=0` the model is identical to the geometry-only case; at `p=1` polarity doubles the microtubule density along φ_f without suppressing other directions. The spindle remains free to align with cell geometry when it conflicts with polarity — matching the experimental observation that both geometry and polarity contribute to division axis selection (Thery et al., Minc et al.).
+
+Polarity is recomputed from the tension field at each division step: no explicit tracking or inheritance is needed, since the mechanical state after relaxation encodes the tissue's history.
+
+The `polarity_strength` parameter of `run_n_divisions` controls the coupling (default 0 = backward-compatible).
+
+### 8. Outer loss clipping (our contribution)
 
 After each outer optimisation epoch, `face_params` (area targets) are clipped to ±50% around the current mean target:
 
@@ -87,13 +109,15 @@ This prevents the bilevel outer optimiser from pushing individual area targets t
 ## Pipeline
 
 ```
+_compute_polarity     →  per-cell polarity axis from tension-weighted edge tensor
 find_spindle          →  spindle axis: Newton-Raphson | PDF mode | PDF sample
+                         (biased by polarity_strength · cos²(θ − φ_f))
 divide_cell           →  JAX-compiled topology surgery (bounded_division port)
 inner_optimization    →  mechanical relaxation (Adam warmup-cosine, peak lr 8e-4)
 bilevel_optimization  →  area homogenisation (outer loss on he_params, face_params)
 ```
 
-The `spindle_method` parameter of `run_n_divisions` selects the axis-finding strategy for all divisions in a run.
+`spindle_method` selects the axis-finding strategy; `polarity_strength` controls the coupling between tension-derived polarity and spindle orientation (both parameters of `run_n_divisions`).
 
 ## Files
 
