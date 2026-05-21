@@ -11,20 +11,20 @@ Simulation of successive mitotic cell divisions on a 2D epithelial tissue using 
 We implement a full biophysical model (`spindle_model.py`) with three selectable methods (`method` parameter of `find_spindle`):
 
 **`method='newton'` (default)** — full 3-DOF equilibrium:
-- Each centrosome emits microtubules in all directions θ ∈ [0, 2π] with density Λ(θ)
-- Elementary force: dF(θ) = Λ(θ) · L(θ) · ê(θ) · dθ
-- Spindle equilibrium (c, φ) found by solving F₁ + F₂ = 0, M₁ + M₂ = 0 via Newton-Raphson with JAX automatic differentiation
+- Each centrosome emits microtubules in all directions $\theta \in [0, 2\pi]$ with density $\Lambda(\theta)$
+- Elementary force: $d\mathbf{F}(\theta) = \Lambda(\theta) \cdot L(\theta) \cdot \hat{\mathbf{e}}(\theta) \, d\theta$
+- Spindle equilibrium $(c, \varphi)$ found by solving $\mathbf{F}_1 + \mathbf{F}_2 = 0$, $M_1 + M_2 = 0$ via Newton-Raphson with JAX automatic differentiation
 - Initialisation: geometric centroid + principal inertia axis
 - Fallback to (centroid, inertia axis) if Newton diverges or places the centre outside the cell
 
 **`method='pdf'`** — Boltzmann orientation density (Thery et al.):
-- The orientational potential is V̄(α) = −∫₀^α T̄(α') dα', where T̄(α) is the net torque at orientation α with the spindle centred at the geometric centroid
-- The probability density p(α) = p₀ exp(−V̄(α)/C) is computed over α ∈ [0, π] (trapezoidal integration, 180 samples)
-- The division axis is the **mode** of p(α) — the most probable orientation
-- C (`pdf_C`) is a noise parameter: small → peaked near equilibrium, large → nearly uniform
+- The orientational potential is $\bar{V}(\alpha) = -\int_0^\alpha \bar{T}(\alpha') d\alpha'$, where $\bar{T}(\alpha)$ is the net torque at orientation $\alpha$ with the spindle centred at the geometric centroid
+- The probability density $p(\alpha) = p_0 \exp(-\bar{V}(\alpha)/C)$ is computed over $\alpha \in [0, \pi]$ (trapezoidal integration, 180 samples)
+- The division axis is the **mode** of $p(\alpha)$ — the most probable orientation
+- $C$ (`pdf_C`) is a noise parameter: small → peaked near equilibrium, large → nearly uniform
 
-**`method='pdf_sample'`** — stochastic draw from p(α):
-- Same density as `'pdf'`, but the division axis is **randomly sampled** from p(α)
+**`method='pdf_sample'`** — stochastic draw from $p(\alpha)$:
+- Same density as `'pdf'`, but the division axis is **randomly sampled** from $p(\alpha)$
 - Models the stochastic variability observed experimentally (thermal noise + nuclear friction)
 
 ### 2. Cell division: direct port of `bounded_division` with a `BoundedMesh` wrapper
@@ -49,9 +49,7 @@ VertAX `cost.py` provides `cost_areas` which minimises `Σ (area_i - area_i_targ
 
 We implement `outer_loss_homogenise` (`energy_adaptive.py`) which minimises the **variance of current cell areas** with no external reference:
 
-```
-L_out = K · mean((area_i - mean_area)²) / mean_area²
-```
+$$L_{\text{out}} = K \cdot \frac{\operatorname{mean}((a_i - \bar{a})^2)}{\bar{a}^2}$$
 
 This drives all cells toward a uniform size after each division, using the bilevel outer optimisation loop of VertAX.
 
@@ -65,19 +63,15 @@ We implement `energy_adaptive` which reads the target area from `face_params[0]`
 
 Cell polarity is derived from the mechanical tension field after each relaxation. The principal axis of the tension-weighted edge-direction tensor:
 
-```
-T_f = Σ_{e ∈ f}  tension_e · (ê_e ⊗ ê_e)
-```
+$$\mathbf{T}_f = \sum_{e \in f} \sigma_e \, \hat{\mathbf{e}}_e \otimes \hat{\mathbf{e}}_e$$
 
-gives each cell a polarity axis φ_f — the direction along which it is most strongly pulled by its junctions.
+gives each cell a polarity axis $\varphi_f$ — the direction along which it is most strongly pulled by its junctions.
 
 This polarity biases the microtubule density without fully controlling it:
 
-```
-Λ(θ) = tension_j · (1 + p · cos²(θ − φ_f))
-```
+$$\Lambda(\theta) = \sigma_j \cdot \bigl(1 + p \cos^2(\theta - \varphi_f)\bigr)$$
 
-where `p = polarity_strength ∈ [0, 1]`. At `p=0` the model is identical to the geometry-only case; at `p=1` polarity doubles the microtubule density along φ_f without suppressing other directions. The spindle remains free to align with cell geometry when it conflicts with polarity — matching the experimental observation that both geometry and polarity contribute to division axis selection (Thery et al., Minc et al.).
+where $p$ = `polarity_strength` $\in [0, 1]$. At $p=0$ the model is identical to the geometry-only case; at $p=1$ polarity doubles the microtubule density along $\varphi_f$ without suppressing other directions. The spindle remains free to align with cell geometry when it conflicts with polarity — matching the experimental observation that both geometry and polarity contribute to division axis selection (Thery et al., Minc et al.).
 
 Polarity is recomputed from the tension field at each division step: no explicit tracking or inheritance is needed, since the mechanical state after relaxation encodes the tissue's history.
 
@@ -98,7 +92,6 @@ This prevents the bilevel outer optimiser from pushing individual area targets t
 ```
 _compute_polarity     →  per-cell polarity axis from tension-weighted edge tensor
 find_spindle          →  spindle axis: Newton-Raphson | PDF mode | PDF sample
-                         (biased by polarity_strength · cos²(θ − φ_f))
 divide_cell           →  JAX-compiled topology surgery (bounded_division port)
 inner_optimization    →  mechanical relaxation (Adam warmup-cosine, peak lr 8e-4)
 bilevel_optimization  →  area homogenisation (outer loss on he_params, face_params)
