@@ -41,20 +41,7 @@ Two bugs in `bounded_division` are fixed in the process:
 - **`div_face` index bug**: `body_fun` passed the loop index `i` as `div_face` instead of the actual `face` id — causing `faceTable[0]` to be overwritten on every single-cell division. Fixed by passing `face` instead.
 - **`jax.lax.select` dtype conflict**: in JAX x64 mode, Python integer literals are `int64` while computed half-edge indices are `int32`. `lax.select` requires identical dtypes; all `jax.lax.select` calls replaced by `jnp.where`, which auto-promotes.
 
-### 3. Arc intersection detection
-
-`bounded_division`'s `get_intersection()` handles both straight edges and circular arcs in a unified JAX-compiled function. The algebraic approach:
-- Reconstruct the circle from chord and inscribed angle
-- Solve line-circle intersection algebraically (quadratic)
-- Filter candidate points via dot-product angular constraints (no arccos)
-
-### 4. Post-division T1 transitions
-
-`bounded_division` provides `update_T1_div` (`topo_div.py`), a specialised T1 transition function for the post-division context with 5 edge-case handlers for degenerate topologies.
-
-We use the standard `update_T1_bounded` from VertAX main.
-
-### 5. Area homogenisation after division (our contribution)
+### 3. Area homogenisation after division (our contribution)
 
 `bounded_division` has no post-division relaxation strategy specific to area homogenisation.
 
@@ -68,13 +55,13 @@ L_out = K · mean((area_i - mean_area)²) / mean_area²
 
 This drives all cells toward a uniform size after each division, using the bilevel outer optimisation loop of VertAX.
 
-### 6. Adaptive target area (our contribution)
+### 4. Adaptive target area (our contribution)
 
 The standard VertAX inner energy uses a fixed `TARGET_AREA` constant.
 
 We implement `energy_adaptive` which reads the target area from `face_params[0]`, updated after each division to `initial_total_area / nb_faces`. This ensures the mechanical equilibrium target scales correctly as the number of cells grows.
 
-### 7. Cell polarity bias on spindle orientation (our contribution)
+### 5. Cell polarity bias on spindle orientation (our contribution)
 
 Cell polarity is derived from the mechanical tension field after each relaxation. The principal axis of the tension-weighted edge-direction tensor:
 
@@ -96,7 +83,7 @@ Polarity is recomputed from the tension field at each division step: no explicit
 
 The `polarity_strength` parameter of `run_n_divisions` controls the coupling (default 0 = backward-compatible).
 
-### 8. Outer loss clipping (our contribution)
+### 6. Outer loss clipping (our contribution)
 
 After each outer optimisation epoch, `face_params` (area targets) are clipped to ±50% around the current mean target:
 
