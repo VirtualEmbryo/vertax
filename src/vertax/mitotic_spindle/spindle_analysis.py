@@ -81,6 +81,7 @@ def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int,
                spindle_method: str = 'newton',
                spindle_pdf_C: float = 0.1,
                spindle_rng: np.random.Generator | None = None,
+               cell_rng: np.random.Generator | None = None,
                polarity_phi: np.ndarray | None = None,
                polarity_strength: float = 0.0) -> int:
     """Randomly select a cell and verify that division is feasible.
@@ -90,13 +91,16 @@ def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int,
     Cells smaller than half the mean area are skipped to avoid creating
     degenerate daughter cells.
     Any unexpected error is re-raised immediately.
+
+    cell_rng controls which cell is picked (permutation seed).
+    spindle_rng controls the axis draw for pdf_sample method.
     """
     face_ids = jnp.arange(mesh.nb_faces)
     areas = np.array(mesh.get_area(face_ids))
     mean_area = float(np.mean(areas))
     min_area = mean_area / 2.0
 
-    rng = np.random.default_rng()
+    rng = cell_rng if cell_rng is not None else np.random.default_rng()
     for fid in rng.permutation(mesh.nb_faces).tolist():
         if areas[fid] < min_area:
             print(f"  Cell {fid} skipped: area {areas[fid]:.4f} < min {min_area:.4f}")
@@ -126,6 +130,7 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                     spindle_method: str = 'newton',
                     spindle_pdf_C: float = 0.1,
                     spindle_rng: np.random.Generator | None = None,
+                    cell_rng: np.random.Generator | None = None,
                     polarity_strength: float = 0.0,
                     ) -> tuple[BoundedMesh, list[BoundedMesh]]:
     """Perform n_divisions successive cell divisions.
@@ -162,6 +167,7 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                          spindle_method=spindle_method,
                          spindle_pdf_C=spindle_pdf_C,
                          spindle_rng=spindle_rng,
+                         cell_rng=cell_rng,
                          polarity_phi=polarity_phi,
                          polarity_strength=polarity_strength)
         print(f"Selected cell: {fid}")
