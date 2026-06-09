@@ -34,9 +34,10 @@ def test_plot() -> None:
         face_plot=FacePlot.PERIMETER,
         vertex_parameters_name="Random vertex parameter",
         title="Too much colorbar is possible !",
+        forced_edge_scale=(-1, 1),
     )
 
-    pbc_mesh = PbcMesh.periodic_voronoi_from_random_seeds(nb_seeds=n_cells, width=width, height=height, random_key=1)
+    pbc_mesh = PbcMesh.from_random_seeds(nb_seeds=n_cells, width=width, height=height, random_key=1)
     rng = np.random.default_rng(1337)
     pbc_mesh.vertices_params = jnp.array(rng.random(pbc_mesh.nb_vertices) * 82 + 14)
     pbc_mesh.edges_params = jnp.array(rng.random(pbc_mesh.nb_edges) * 3 + 1)
@@ -48,6 +49,8 @@ def test_plot() -> None:
         face_plot=FacePlot.AREA,
         vertex_parameters_name="Random vertex parameter",
         title="Too much colorbar is possible !",
+        forced_vertex_scale=(0, 100),
+        forced_face_scale=(0, 10),
     )
 
 

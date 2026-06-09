@@ -1,4 +1,7 @@
 memory_runtime*
+NEW_E2_not_working
+OLD_E2_working
+NEW_run_old_code_line_tensions
 tests/other_tests
 vertax_final_alessandro
 edges.txt
@@ -11,6 +14,8 @@ Alessandro_plot_code
 .ipynb_checkpoints
 test_n_bilevel/
 test_n_bilevel_bounded/
+tests/correlation/results*
+VertAX-7.pdf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -20,10 +20,13 @@ __all__ = ["BoundedBilevelOptimizer"]
 
 
 class BoundedBilevelOptimizer(_BilevelOptimizer):
-    """Bi-level optimizer for periodic boundary condition meshes."""
+    """Bi-level optimizer for bounded meshes (`BoundedMesh`)."""
 
     def __init__(self) -> None:
-        """Create a Bi-level optimizer for periodic boundary condition meshes with default parameters."""
+        """Create a Bi-level optimizer for bounded meshes with default parameters.
+
+        Does not set the inner and outer loss functions yet.
+        """
         super().__init__()
         self._inner_opt_func = self._inner_opt
         self._outer_opt_func = self._outer_opt
@@ -173,7 +176,14 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
         else:
             match self.bilevel_optimization_method:
                 case BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
-                    mesh.vertices_params, mesh.edges_params, mesh.faces_params = outer_opt_bounded(
+                    (
+                        mesh.vertices,
+                        mesh.edges,
+                        mesh.faces,
+                        mesh.vertices_params,
+                        mesh.edges_params,
+                        mesh.faces_params,
+                    ) = outer_opt_bounded(
                         mesh.vertices,
                         mesh.angles,
                         mesh.edges,
@@ -201,7 +211,14 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                     )
 
                 case BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION:
-                    mesh.vertices_params, mesh.edges_params, mesh.faces_params = outer_eq_prop_bounded(
+                    (
+                        mesh.vertices,
+                        mesh.edges,
+                        mesh.faces,
+                        mesh.vertices_params,
+                        mesh.edges_params,
+                        mesh.faces_params,
+                    ) = outer_eq_prop_bounded(
                         mesh.vertices,
                         mesh.angles,
                         mesh.edges,
@@ -230,7 +247,14 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                     )
 
                 case BilevelOptimizationMethod.IMPLICIT_DIFFERENTIATION:
-                    mesh.vertices_params, mesh.edges_params, mesh.faces_params = outer_implicit_bounded(
+                    (
+                        mesh.vertices,
+                        mesh.edges,
+                        mesh.faces,
+                        mesh.vertices_params,
+                        mesh.edges_params,
+                        mesh.faces_params,
+                    ) = outer_implicit_bounded(
                         mesh.vertices,
                         mesh.angles,
                         mesh.edges,
@@ -257,7 +281,14 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         self._update_T1_func,
                     )
                 case BilevelOptimizationMethod.ADJOINT_STATE:
-                    mesh.vertices_params, mesh.edges_params, mesh.faces_params = outer_adjoint_state_bounded(
+                    (
+                        mesh.vertices,
+                        mesh.edges,
+                        mesh.faces,
+                        mesh.vertices_params,
+                        mesh.edges_params,
+                        mesh.faces_params,
+                    ) = outer_adjoint_state_bounded(
                         mesh.vertices,
                         mesh.angles,
                         mesh.edges,

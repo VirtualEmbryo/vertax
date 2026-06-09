@@ -19,10 +19,13 @@ __all__ = ["PbcBilevelOptimizer"]
 
 
 class PbcBilevelOptimizer(_BilevelOptimizer):
-    """Bi-level optimizer for periodic boundary condition meshes."""
+    """Bi-level optimizer for periodic boundary condition meshes (`PbcMesh`)."""
 
     def __init__(self) -> None:
-        """Create a Bi-level optimizer for periodic boundary condition meshes with default parameters."""
+        """Create a Bi-level optimizer for periodic boundary condition meshes with default parameters.
+
+        Does not specify the inner and outer loss yet.
+        """
         super().__init__()
         self._inner_opt_func = self._inner_opt
         self._outer_opt_func = self._outer_opt
@@ -159,7 +162,11 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
         else:
             match self.bilevel_optimization_method:
                 case BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
-                    mesh.vertices_params, mesh.edges_params, mesh.faces_params = outer_opt(
+                    (
+                        mesh.vertices_params,
+                        mesh.edges_params,
+                        mesh.faces_params,
+                    ) = outer_opt(
                         mesh.vertices,
                         mesh.edges,
                         mesh.faces,
@@ -187,7 +194,11 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                     )
 
                 case BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION:
-                    mesh.vertices_params, mesh.edges_params, mesh.faces_params = outer_eq_prop(
+                    (
+                        mesh.vertices_params,
+                        mesh.edges_params,
+                        mesh.faces_params,
+                    ) = outer_eq_prop(
                         mesh.vertices,
                         mesh.edges,
                         mesh.faces,
@@ -216,7 +227,11 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                     )
 
                 case BilevelOptimizationMethod.IMPLICIT_DIFFERENTIATION:
-                    mesh.vertices_params, mesh.edges_params, mesh.faces_params = outer_implicit(
+                    (
+                        mesh.vertices_params,
+                        mesh.edges_params,
+                        mesh.faces_params,
+                    ) = outer_implicit(
                         mesh.vertices,
                         mesh.edges,
                         mesh.faces,
@@ -244,7 +259,11 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                     )
 
                 case BilevelOptimizationMethod.ADJOINT_STATE:
-                    mesh.vertices_params, mesh.edges_params, mesh.faces_params = outer_adjoint_state(
+                    (
+                        mesh.vertices_params,
+                        mesh.edges_params,
+                        mesh.faces_params,
+                    ) = outer_adjoint_state(
                         mesh.vertices,
                         mesh.edges,
                         mesh.faces,

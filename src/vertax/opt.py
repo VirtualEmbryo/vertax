@@ -143,7 +143,7 @@ def _jit_minimize(
     step_count = jnp.array(0)
     should_stop = jnp.array(False)
 
-    # 2. Define the inner step function for lax.scan
+    # Define the inner step function for lax.scan
     # The inner function is defined *without* @jit because it's compiled by lax.scan/jit on minimize
     def scan_step(
         carry: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, int, Array, Array], i: int
@@ -166,7 +166,7 @@ def _jit_minimize(
 
         # Determine if we are still running (i.e., not stopped)
         is_running = jnp.logical_not(should_stop)
-        # 1) Compute loss
+        # Compute loss
         L_current = L_in(
             vt[selected_verts],
             ht[selected_hes],
@@ -176,23 +176,23 @@ def _jit_minimize(
             fp[selected_faces],
         )
 
-        # 2) Early stopping bookkeeping
+        # Early stopping bookkeeping
         denom = jnp.where(prev_L_values[-1] != 0, prev_L_values[-1], 1.0)
         rel_var = jnp.abs((L_current - prev_L_values[-1]) / denom)
 
         new_stagnation_count = jnp.where(rel_var < tolerance, stagnation_count + 1, 0)
         new_should_stop = (new_stagnation_count >= patience) | (i >= iterations_max - 1)
 
-        # 3) Gradient wrt chosen argnums
+        # Gradient wrt chosen argnums
         grads = grad(L_in, argnums=optimization_target.value)(vt, ht, ft, vp, hp, fp)
 
-        # 4) Optimizer update
+        # Optimizer update
         updates, new_opt_state = solver.update(grads, opt_state)
 
-        # 5) Apply updates to the chosen array on selected indices
+        # Apply updates to the chosen array on selected indices
         updates_sel = updates.at[sel].get()  # type: ignore
 
-        # --- Conditional Application of Optimization Update and State ---
+        # Conditional application of optimization update and state
         arrays = [vt, ht, ft, vp, hp, fp]
         k = optimization_target.value
         new_optim = arrays[k].at[sel].set(arrays[k][sel] + updates_sel)
@@ -206,7 +206,7 @@ def _jit_minimize(
         stagnation_count = lax.cond(is_running, lambda: new_stagnation_count, lambda: stagnation_count)
         should_stop = new_should_stop  # should_stop is a flag for the *next* iteration
 
-        # 6) Geometry updates (Must also be conditional/masked)
+        # Geometry updates (must also be conditional/masked)
         new_vt_pbc, new_ht_pbc, new_ft_pbc = update_pbc(vt, ht, ft, width, height)
         vt = lax.cond(is_running, lambda: new_vt_pbc, lambda: vt)
         ht = lax.cond(is_running, lambda: new_ht_pbc, lambda: ht)
@@ -219,12 +219,12 @@ def _jit_minimize(
         ht = lax.cond(is_running, lambda: new_ht_T1, lambda: ht)
         ft = lax.cond(is_running, lambda: new_ft_T1, lambda: ft)
 
-        # 7) Shift prev_L_values
+        # Shift prev_L_values
         new_prev_L_values = prev_L_values.at[1:].set(prev_L_values[:-1])
         new_prev_L_values = new_prev_L_values.at[0].set(L_current)
         prev_L_values = lax.cond(is_running, lambda: new_prev_L_values, lambda: prev_L_values)
 
-        # 8) Update History and Step Count
+        # Update history and step count
         L_list = L_list.at[i].set(L_current)
         step_count = i + 1
 
@@ -244,8 +244,7 @@ def _jit_minimize(
         )
         return new_carry, None
 
-    # 3. Call lax.scan
-
+    # Call lax.scan
     init_carry = (
         vertTable,
         heTable,
@@ -263,7 +262,7 @@ def _jit_minimize(
 
     final_state, _ = lax.scan(scan_step, init_carry, xs=jnp.arange(iterations_max))  # ty:ignore[invalid-argument-type]
 
-    # 4. Unpack and return results (for slicing outside JIT)
+    # Unpack and return results (for slicing outside jit)
     vt_f, ht_f, ft_f, vp_f, hp_f, fp_f, _, _, _, step_f, _, L_hist = final_state
     return (vt_f, ht_f, ft_f, vp_f, hp_f, fp_f), (L_hist, step_f)  # ty:ignore[invalid-return-type]
 
@@ -377,7 +376,7 @@ def inner_opt(
     # Convert the JAX array step_f to a Python integer
     step_f = step_f_array.item()
 
-    # Now slice using standard Python/NumPy slicing
+    # Slice using standard Python/NumPy slicing
     final_L_list = L_hist_full[:step_f]
 
     # Return updated arrays and loss history
@@ -476,59 +475,7 @@ def outer_opt(
     update_t1_func: UpdateT1Func = update_T1,
 ) -> tuple[Array, Array, Array]:
     """Outer optimization for Automatic differentiation method."""
-    grad_verts = grad(cost_ad, argnums=5)(
-        vertTable,
-        heTable,
-        faceTable,
-        width,
-        height,
-        vert_params,
-        he_params,
-        face_params,
-        vertTable_target,
-        heTable_target,
-        faceTable_target,
-        L_in,
-        L_out,
-        solver_inner,
-        min_dist_T1,
-        iterations_max,
-        tolerance,
-        patience,
-        selected_verts,
-        selected_hes,
-        selected_faces,
-        image_target,
-        update_t1_func,
-    )
-
-    grad_hes = grad(cost_ad, argnums=6)(
-        vertTable,
-        heTable,
-        faceTable,
-        width,
-        height,
-        vert_params,
-        he_params,
-        face_params,
-        vertTable_target,
-        heTable_target,
-        faceTable_target,
-        L_in,
-        L_out,
-        solver_inner,
-        min_dist_T1,
-        iterations_max,
-        tolerance,
-        patience,
-        selected_verts,
-        selected_hes,
-        selected_faces,
-        image_target,
-        update_t1_func,
-    )
-
-    grad_faces = grad(cost_ad, argnums=7)(
+    grad_verts, grad_hes, grad_faces = grad(cost_ad, argnums=(5, 6, 7))(
         vertTable,
         heTable,
         faceTable,
@@ -851,7 +798,9 @@ def outer_eq_prop(
         update_t1_func,
     )
 
-    grad_loss_ep_free_verts = grad(_loss_ep_static, argnums=5)(
+    grad_ep = grad(_loss_ep_static, argnums=(5, 6, 7))
+
+    grad_loss_ep_free_verts, grad_loss_ep_free_hes, grad_loss_ep_free_faces = grad_ep(
         vertTable_free,
         heTable_free,
         faceTable_free,
@@ -872,91 +821,7 @@ def outer_eq_prop(
         beta=-beta,
     )
 
-    grad_loss_ep_nudged_verts = grad(_loss_ep_static, argnums=5)(
-        vertTable_nudged,
-        heTable_nudged,
-        faceTable_nudged,
-        width,
-        height,
-        vert_params,
-        he_params,
-        face_params,
-        vertTable_target,
-        heTable_target,
-        faceTable_target,
-        L_in,
-        L_out,
-        selected_verts,
-        selected_hes,
-        selected_faces,
-        image_target,
-        beta,
-    )
-
-    grad_loss_ep_free_hes = grad(_loss_ep_static, argnums=6)(
-        vertTable_free,
-        heTable_free,
-        faceTable_free,
-        width,
-        height,
-        vert_params,
-        he_params,
-        face_params,
-        vertTable_target,
-        heTable_target,
-        faceTable_target,
-        L_in,
-        L_out,
-        selected_verts,
-        selected_hes,
-        selected_faces,
-        image_target,
-        beta=-beta,
-    )
-
-    grad_loss_ep_nudged_hes = grad(_loss_ep_static, argnums=6)(
-        vertTable_nudged,
-        heTable_nudged,
-        faceTable_nudged,
-        width,
-        height,
-        vert_params,
-        he_params,
-        face_params,
-        vertTable_target,
-        heTable_target,
-        faceTable_target,
-        L_in,
-        L_out,
-        selected_verts,
-        selected_hes,
-        selected_faces,
-        image_target,
-        beta,
-    )
-
-    grad_loss_ep_free_faces = grad(_loss_ep_static, argnums=7)(
-        vertTable_free,
-        heTable_free,
-        faceTable_free,
-        width,
-        height,
-        vert_params,
-        he_params,
-        face_params,
-        vertTable_target,
-        heTable_target,
-        faceTable_target,
-        L_in,
-        L_out,
-        selected_verts,
-        selected_hes,
-        selected_faces,
-        image_target,
-        beta=-beta,
-    )
-
-    grad_loss_ep_nudged_faces = grad(_loss_ep_static, argnums=7)(
+    grad_loss_ep_nudged_verts, grad_loss_ep_nudged_hes, grad_loss_ep_nudged_faces = grad_ep(
         vertTable_nudged,
         heTable_nudged,
         faceTable_nudged,

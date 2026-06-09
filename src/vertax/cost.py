@@ -1,13 +1,57 @@
-"""Cost functions collection."""
+"""Cost functions collection, used for outer optimization.
+
+A cost function can be any user-defined function but it has to respect a strict signature.
+
+For a `PbcMesh` and `PbcBilevelOptimizer`, the cost function must have the following signature:
+    vertTable: Array,
+    heTable: Array,
+    faceTable: Array,
+    width: float,
+    height: float,
+    vertTable_target: Array,
+    heTable_target: Array,
+    faceTable_target: Array,
+    selected_verts: Array | None,
+    selected_hes: Array | None,
+    selected_faces: Array | None,
+    image_target: Array | None,
+and return an Array (or float).
+
+The names can vary and you can give default parameters. But the number and type of parameters is important.
+You don't have to use every parameters but they all have to be here.
+An unused parameters can of course also have the type None.
+
+Same for `BoundedMesh` and `BoundedBilevelOptimizer`, but with a slightly different signature:
+    vertTable: Array,
+    angTable: Array,
+    heTable: Array,
+    faceTable: Array,
+    vertTable_target: Array,
+    angTable_target: Array,
+    heTable_target: Array,
+    faceTable_target: Array,
+    selected_verts: Array | None,
+    selected_hes: Array | None,
+    selected_faces: Array | None,
+    image_target: Array | None,
+and return an Array (or float).
+
+Hopefully the variable names are self-explanatory.
+
+You can create a function with this signature exactly that uses also locally-accessible external variable if you want.
+"""
 
 from functools import partial
 
 import jax.numpy as jnp
+import numpy as np
 from jax import Array, jit, vmap
 from jax.lax import fori_loop
 from jax.numpy import arange, array, diff, einsum, exp, expand_dims, int32, meshgrid, pi, sqrt, stack
 from jax.numpy import sinc as npsinc
 from jax.numpy.fft import ifft2
+from numpy.typing import NDArray
+from scipy.optimize import linear_sum_assignment
 
 from vertax.geo import get_area
 
@@ -184,7 +228,7 @@ def cost_v2v(
     selected_faces: Array | None = None,
     _image_target: Array | None = None,
 ) -> Array:
-    """Example of a cost function."""
+    """Cost vertex to vertex. Compare the positions of given vertices to target vertices (`PbcMesh`)."""
     if selected_verts is None:
         selected_verts = jnp.arange(vertTable.shape[0])
     if selected_hes is None:
@@ -270,8 +314,9 @@ def cost_mesh2image(
     _selected_faces: Array,
     image_target: Array,
 ) -> Array:
-    """Example of a cost function."""
-    starting = (vertTable[heTable[selected_hes, 3], :2]) * 2 / [width, height]  # (M, 2)
+    """Cost mesh to image. Compare the given vertices positions to a target image (`PbcMesh`)."""
+    wh = jnp.asarray([width, height])
+    starting = (vertTable[heTable[selected_hes, 3], :2]) * 2 / wh  # (M, 2)
     # ending = (vertTable[heTable[selected_hes, 4], :2]) * 2 / L_box  # (M, 2)
     ending = (
         (
@@ -283,10 +328,10 @@ def cost_mesh2image(
                 ],
                 axis=-1,
             )
-            * [width, height]
+            * wh
         )
         * 2
-        / [width, height]
+        / wh
     )
 
     he_edges = stack((starting, ending), axis=1)  # (N, 2, 2)
@@ -319,7 +364,7 @@ def cost_areas(
     faceTable_target: Array,
     _image_target: Array,
 ) -> Array:
-    """Example of a cost function."""
+    """Cost areas : compare the areas of the given mesh versus the areas of the target mesh (`PbcMesh`)."""
 
     def mapped_fn(f: Array) -> Array:
         return (
@@ -346,7 +391,7 @@ def cost_ratio(
     _selected_faces: Array | None = None,
     _image_target: Array | None = None,
 ) -> Array:
-    """Example of a cost function."""
+    """Cost that nudges a `BoundedMesh` to elongate along one axis while narrowing along the orthogonal axis."""
     # Compute pairwise squared distances by broadcasting
     # diff shape: (n, n, d)
     diff = vertTable[:, None, :] - vertTable[None, :, :]
@@ -393,7 +438,10 @@ def cost_checkerboard(
     _selected_faces: Array | None = None,
     _image_target: Array | None = None,
 ) -> Array:
-    """Example of a cost function."""
+    """Cost that nudges a `BoundedMesh` with different fated cells to avoid having neighboring cells with same fate.
+
+    This leads to a checkerboard pattern when there is 2 fates.
+    """
 
     def body_fun(i: int, current_len: Array) -> Array:
         idx = 2 * i
@@ -412,3 +460,431 @@ def cost_checkerboard(
 
     n_edges = heTable.shape[0] // 2
     return fori_loop(0, n_edges, body_fun, 0.0)
+
+
+@partial(jit, static_argnums=(3, 4))
+def cost_IAS(  # noqa: C901, N802
+    vertTable: Array,
+    heTable: Array,
+    faceTable: Array,
+    _width: float,
+    _height: float,
+    vertTable_target: Array,
+    heTable_target: Array,
+    faceTable_target: Array,
+    _selected_verts: Array | None = None,
+    _selected_hes: Array | None = None,
+    _selected_faces: Array | None = None,
+    _image_target: Array | None = None,
+) -> Array:
+    r"""Differentiable Index Aware Structural Loss. Force to respect the topology.
+
+    C_{IAS}(i,j)   = \sqrt{\sum_{k=1}^{N} (S_1(i,k) - S_2(j,k))^2}
+    """
+    L_box = jnp.sqrt(len(faceTable))
+
+    def l2(x: Array, y: Array) -> Array:
+        diff = x[:, None, :] - y[None, :, :]
+        return jnp.sqrt(jnp.sum(diff**2, axis=-1) + 1e-12)
+
+    def mse(x: Array, y: Array) -> Array:
+        diff = x[:, None, :] - y[None, :, :]
+        return jnp.sum(diff**2, axis=-1) + 1e-12
+
+    def sinkhorn(a: Array, b: Array, C: Array, eps: float = 5e-2, n_iters: int = 50) -> Array:
+        K = jnp.exp(-C / eps)
+        u = jnp.ones_like(a)
+        v = jnp.ones_like(b)
+
+        def body(_: int, state: tuple[Array, Array]) -> tuple[Array, Array]:
+            u, v = state
+            u = a / (K @ v + 1e-12)
+            v = b / (K.T @ u + 1e-12)
+            return (u, v)
+
+        u, v = fori_loop(0, n_iters, body, (u, v))
+        return jnp.outer(u, v) * K
+
+    # dual graph from half-edges
+    def build_dual_adj(heTable: Array, n_faces: int) -> Array:
+        face = heTable[:, 5]
+        twin = heTable[:, 2]
+
+        face_twin = face[twin]
+
+        # mask: 1.0 for valid edges, 0.0 for boundary/self
+        mask = (face != face_twin).astype(jnp.float32)
+
+        A = jnp.zeros((n_faces, n_faces))
+
+        # scatter with mask weighting (no boolean indexing)
+        A = A.at[face, face_twin].add(mask)
+        A = A.at[face_twin, face].add(mask)
+
+        # binarize (avoid double counts)
+        A = jnp.clip(A, 0.0, 1.0)
+
+        return A
+
+    # structure metric (1-hop + 2-hop)
+    def structure_matrix(A: Array) -> Array:
+        # A2 = A @ A
+        # normalize to avoid scaling issues
+        # return 2.0 - A - 0.5 * A2
+        return 2.0 - A
+
+    def get_face_vertices(
+        he_start: Array, heTable: Array, vertTable: Array, max_edges: int = 20
+    ) -> tuple[Array, Array]:
+        """Collect vertices of one face using half-edge traversal.
+
+        Returns fixed-size array (max_edges, 2) + mask
+        """
+        verts = jnp.zeros((max_edges, 2))
+        mask = jnp.zeros((max_edges,))
+        offset = jnp.array([0, 0])
+
+        def body_fun(i: int, state: tuple[Array, Array, Array, Array]) -> tuple[Array, Array, Array, Array]:
+            he, verts, mask, offset = state
+
+            source = heTable[he, 3].astype(jnp.int32)
+            off = heTable[he, 6:8]
+
+            pos = vertTable[source] + offset * L_box  # jnp.array([width, height])
+
+            verts = verts.at[i].set(pos)
+            mask = mask.at[i].set(1.0)
+
+            offset += off
+            he_next = heTable[he, 1].astype(jnp.int32)
+
+            return (he_next, verts, mask, offset)
+
+        _he_final, verts, mask, offset = fori_loop(0, max_edges, body_fun, (he_start, verts, mask, offset))
+
+        return verts, mask
+
+    def polygon_centroid(verts: Array, mask: Array) -> Array:
+        """Compute centroid from masked polygon vertices."""
+        # shift for edges
+        v = verts
+        v_next = jnp.roll(v, -1, axis=0)
+
+        cross = v[:, 0] * v_next[:, 1] - v_next[:, 0] * v[:, 1]
+        cross = cross * mask
+
+        area = jnp.sum(cross) / 2.0 + 1e-12
+
+        cx = jnp.sum((v[:, 0] + v_next[:, 0]) * cross) / (6 * area)
+        cy = jnp.sum((v[:, 1] + v_next[:, 1]) * cross) / (6 * area)
+
+        return jnp.array([cx, cy])
+
+    def compute_face_centroids(faceTable: Array, heTable: Array, vertTable: Array) -> Array:
+        """Compute centroids for all faces."""
+        he_start = faceTable[:].astype(jnp.int32)
+
+        def single_face(he: Array) -> Array:
+            verts, mask = get_face_vertices(he, heTable, vertTable)
+            return polygon_centroid(verts, mask)
+
+        return vmap(single_face)(he_start)
+
+    alpha = 0.0
+    """ATTENTION !!!!!!!!!!!!"""
+
+    # face centroids
+    X = compute_face_centroids(faceTable, heTable, vertTable)
+    Y = compute_face_centroids(faceTable_target, heTable_target, vertTable_target)
+
+    N = X.shape[0]
+    M = Y.shape[0]
+
+    # uniform weights
+    a = jnp.ones(N) / N
+    b = jnp.ones(M) / M
+
+    # geometry cost
+    C_geom = l2(X, Y)
+
+    # structure cost
+    A1 = build_dual_adj(heTable, N)
+    A2 = build_dual_adj(heTable_target, M)
+
+    S1 = structure_matrix(A1)
+    S2 = structure_matrix(A2)
+
+    # project structure into pairwise node cost
+    # (cheap approximation of tem)
+    # C_l2 = l2(S1, S2)
+    C_mse = mse(S1, S2)
+
+    # combined cost
+    C_total = alpha * C_geom + (1.0 - alpha) * C_mse
+
+    # transport
+    gamma = sinkhorn(a, b, C_total)
+
+    # final loss
+    loss = jnp.sum(gamma * C_total)
+
+    return loss
+
+
+def cost_d_IAS(  # noqa: N802
+    _vertTable: Array,
+    heTable: Array,
+    faceTable: Array,
+    _width: float,
+    _height: float,
+    _vertTable_target: Array,
+    heTable_target: Array,
+    faceTable_target: Array,
+    _selected_verts: Array | None = None,
+    _selected_hes: Array | None = None,
+    _selected_faces: Array | None = None,
+    _image_target: Array | None = None,
+) -> int:
+    r"""Discrete Index Aware Structural loss. Counts mismatched edges.
+
+    C_{d-IAS}(i,j) = \sum_{k=1}^{N} |A_1(i,k) - A_2(j,k)|
+    """
+
+    def build_dual_adj_np(heTable: Array, n_faces: int) -> NDArray:
+        face = heTable[:, 5]
+        twin = heTable[:, 2]
+
+        face_twin = face[twin]
+        mask = (face != face_twin).astype(float)
+
+        A = np.zeros((n_faces, n_faces))
+
+        A[face, face_twin] += mask
+        A[face_twin, face] += mask
+
+        A = np.clip(A, 0.0, 1.0)
+        return A
+
+    n1 = len(faceTable)
+    n2 = len(faceTable_target)
+
+    if n1 != n2:
+        msg = "This version requires same number of faces"
+        raise ValueError(msg)
+
+    n = n1
+
+    A1 = build_dual_adj_np(heTable, n)
+    A2 = build_dual_adj_np(heTable_target, n)
+
+    # --- Step 1: node matching via Hungarian ---
+    # cost between nodes = L1 difference of adjacency rows
+    C = np.sum(np.abs(A1[:, None, :] - A2[None, :, :]), axis=-1)
+
+    row_ind, col_ind = linear_sum_assignment(C)
+
+    # permutation: face i in A1 ↔ face col_ind[i] in A2
+    P = np.zeros((n, n))
+    P[row_ind, col_ind] = 1.0
+
+    # --- Step 2: permute A2 ---
+    A2_perm = P @ A2 @ P.T
+
+    # --- Step 3: count edge mismatches ---
+    diff = np.abs(A1 - A2_perm)
+
+    # count each edge once
+    diff_upper = np.triu(diff, k=1)
+
+    loss = int(np.sum(diff_upper))
+
+    return loss
+
+
+@partial(jit, static_argnums=(3, 4))
+def cost_tem_halfedge(
+    vertTable: Array,
+    heTable: Array,
+    faceTable: Array,
+    width: float,
+    height: float,
+    vertTable_target: Array,
+    heTable_target: Array,
+    faceTable_target: Array,
+    _selected_verts: Array | None = None,
+    _selected_hes: Array | None = None,
+    _selected_faces: Array | None = None,
+    _image_target: Array | None = None,
+) -> Array:
+    """TEM-inspired loss using half-edge dual graph (cells)."""
+
+    # ---------- helpers ----------
+    def pairwise_periodic_distances(x: Array, y: Array) -> Array:
+        dx = x[:, None, 0] - y[None, :, 0]
+        dy = x[:, None, 1] - y[None, :, 1]
+
+        dx = jnp.minimum(jnp.abs(dx), width - jnp.abs(dx))
+        dy = jnp.minimum(jnp.abs(dy), height - jnp.abs(dy))
+
+        return jnp.sqrt(dx**2 + dy**2 + 1e-12)
+
+    def sinkhorn(a: Array, b: Array, C: Array, eps: float = 5e-2, n_iters: int = 50) -> Array:
+        K = jnp.exp(-C / eps)
+        u = jnp.ones_like(a)
+        v = jnp.ones_like(b)
+
+        def body(_: int, state: tuple[Array, Array]) -> tuple[Array, Array]:
+            u, v = state
+            u = a / (K @ v + 1e-12)
+            v = b / (K.T @ u + 1e-12)
+            return (u, v)
+
+        u, v = fori_loop(0, n_iters, body, (u, v))
+        return jnp.outer(u, v) * K
+
+    # ---------- dual graph ----------
+    def build_dual_adj(heTable: Array, n_faces: int) -> Array:
+        face = heTable[:, 5].astype(jnp.int32)
+        twin = heTable[:, 2].astype(jnp.int32)
+
+        face_twin = face[twin]
+
+        valid = face != face_twin
+        keep = valid & (face < face_twin)
+
+        weight = keep.astype(jnp.float32)
+
+        A = jnp.zeros((n_faces, n_faces))
+
+        A = A.at[face, face_twin].add(weight)
+        A = A.at[face_twin, face].add(weight)
+
+        return A
+
+    def structure_matrix(A: Array) -> Array:
+        # A2 = A @ A
+        # return 2.0 - A - 0.5 * A2
+        return 2.0 - A
+
+    # ---------- centroids ----------
+    # faceTable stores a half-edge index → get its source vertex
+    he_idx = faceTable[:, 0].astype(jnp.int32)
+
+    X = vertTable[heTable[he_idx, 3].astype(jnp.int32), :2]
+    Y = vertTable_target[heTable_target[faceTable_target[:, 0].astype(jnp.int32), 3].astype(jnp.int32), :2]
+
+    N = X.shape[0]
+    M = Y.shape[0]
+
+    a = jnp.ones(N) / N
+    b = jnp.ones(M) / M
+
+    # ---------- costs ----------
+    C_geom = pairwise_periodic_distances(X, Y)
+
+    A1 = build_dual_adj(heTable, N)
+    A2 = build_dual_adj(heTable_target, M)
+
+    S1 = structure_matrix(A1)
+    S2 = structure_matrix(A2)
+
+    # structure comparison (non-periodic, abstract space)
+    diff = S1[:, None, :] - S2[None, :, :]
+    C_struct = jnp.sqrt(jnp.sum(diff**2, axis=-1) + 1e-12)
+
+    alpha = 0.5
+    C_total = alpha * C_geom + (1.0 - alpha) * C_struct
+
+    gamma = sinkhorn(a, b, C_total)
+
+    return jnp.sum(gamma * C_total)
+
+
+@partial(jit, static_argnums=(3, 4))
+def cost_v2v_tem(
+    vertTable: Array,
+    heTable: Array,
+    faceTable: Array,
+    width: float,
+    height: float,
+    vertTable_target: Array,
+    heTable_target: Array,
+    faceTable_target: Array,
+    _selected_verts: Array | None = None,
+    _selected_hes: Array | None = None,
+    _selected_faces: Array | None = None,
+    _image_target: Array | None = None,
+) -> Array:
+    """Mix of cost_v2v and cost_tem_halfedge (with respective weights 0.99 and 0.01)."""
+    return 0.99 * cost_v2v(
+        vertTable,
+        heTable,
+        faceTable,
+        width,
+        height,
+        vertTable_target,
+        heTable_target,
+        faceTable_target,
+        selected_verts=None,
+        selected_hes=None,
+        selected_faces=None,
+        image_target=None,
+    ) + 0.01 * cost_tem_halfedge(
+        vertTable,
+        heTable,
+        faceTable,
+        width,
+        height,
+        vertTable_target,
+        heTable_target,
+        faceTable_target,
+        selected_verts=None,
+        selected_hes=None,
+        selected_faces=None,
+        image_target=None,
+    )
+
+
+@partial(jit, static_argnums=(3, 4))
+def cost_v2v_ias(
+    vertTable: Array,
+    heTable: Array,
+    faceTable: Array,
+    width: float,
+    height: float,
+    vertTable_target: Array,
+    heTable_target: Array,
+    faceTable_target: Array,
+    _selected_verts: Array | None = None,
+    _selected_hes: Array | None = None,
+    _selected_faces: Array | None = None,
+    _image_target: Array | None = None,
+) -> Array:
+    """Mix of cost_v2v and cost_IAS (with weight 0.6 and 0.4)."""
+    return 0.6 * cost_v2v(
+        vertTable,
+        heTable,
+        faceTable,
+        width,
+        height,
+        vertTable_target,
+        heTable_target,
+        faceTable_target,
+        selected_verts=None,
+        selected_hes=None,
+        selected_faces=None,
+        _image_target=None,
+    ) + 0.4 * cost_IAS(
+        vertTable,
+        heTable,
+        faceTable,
+        width,
+        height,
+        vertTable_target,
+        heTable_target,
+        faceTable_target,
+        selected_verts=None,
+        selected_hes=None,
+        selected_faces=None,
+        image_target=None,
+    )

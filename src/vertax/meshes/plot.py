@@ -25,28 +25,41 @@ class FacePlot(Enum):
     """What it is possible to show on a face."""
 
     MULTICOLOR = 1
+    """Each face get a random color."""
     FACE_PARAMETER = 2
+    """The face color depends on its parameter."""
     AREA = 3
+    """The face color depends on its area."""
     PERIMETER = 4
+    """The face color depends on its perimeter."""
     WHITE = 5
+    """All faces are just white."""
     FATES = 6
+    """Faces are colored depending on their fate marker (if any)."""
 
 
 class EdgePlot(Enum):
     """What it is possible to show on an edge."""
 
     BLACK = 1
+    """All edges are black."""
     EDGE_PARAMETER = 2
+    """The edge color depends on its parameter."""
     LENGTH = 3
+    """The edge color depends on its length."""
     INVISIBLE = 4
+    """Do not show edges."""
 
 
 class VertexPlot(Enum):
     """What it is possible to show on a vertex."""
 
     BLACK = 1
+    """Vertices are black."""
     VERTEX_PARAMETER = 2
+    """The vertex color depends on its parameter."""
     INVISIBLE = 3
+    """Do not show vertices."""
 
 
 def add_colorbar(fig: Figure, ax: Axes, v_min: float, v_max: float, cmap: Colormap) -> Colorbar:
@@ -108,6 +121,9 @@ def plot_mesh(
     vertices_cmap_name: str = "spring",
     vertices_size: float = 20,
     title: str = "",
+    forced_vertex_scale: tuple[float, float] | None = None,
+    forced_edge_scale: tuple[float, float] | None = None,
+    forced_face_scale: tuple[float, float] | None = None,
 ) -> None:
     """Plot the mesh and decide to save and/or show the mesh or not."""
     if isinstance(mesh, PbcMesh):
@@ -128,6 +144,9 @@ def plot_mesh(
             vertices_cmap_name,
             vertices_size,
             title,
+            forced_vertex_scale,
+            forced_edge_scale,
+            forced_face_scale,
         )
     elif isinstance(mesh, BoundedMesh):
         _plot_bounded_mesh(
@@ -147,6 +166,9 @@ def plot_mesh(
             vertices_cmap_name,
             vertices_size,
             title,
+            forced_vertex_scale,
+            forced_edge_scale,
+            forced_face_scale,
         )
 
 
@@ -164,6 +186,9 @@ def get_plot_mesh(
     vertices_cmap_name: str = "spring",
     vertices_size: float = 20,
     title: str = "",
+    forced_vertex_scale: tuple[float, float] | None = None,
+    forced_edge_scale: tuple[float, float] | None = None,
+    forced_face_scale: tuple[float, float] | None = None,
 ) -> tuple[Figure, Axes]:
     """Get the matplotlib figure and and ax for one plot."""
     if isinstance(mesh, PbcMesh):
@@ -181,6 +206,9 @@ def get_plot_mesh(
             vertices_cmap_name,
             vertices_size,
             title,
+            forced_vertex_scale,
+            forced_edge_scale,
+            forced_face_scale,
         )
     elif isinstance(mesh, BoundedMesh):
         return _get_plot_bounded_mesh(
@@ -197,6 +225,9 @@ def get_plot_mesh(
             vertices_cmap_name,
             vertices_size,
             title,
+            forced_vertex_scale,
+            forced_edge_scale,
+            forced_face_scale,
         )
     else:
         msg = f"Expected either a PbcMesh or a BoundedMesh. Got {mesh} instead."
@@ -220,6 +251,9 @@ def _plot_pbc_mesh(
     vertices_cmap_name: str = "spring",
     vertices_size: float = 20,
     title: str = "",
+    forced_vertex_scale: tuple[float, float] | None = None,
+    forced_edge_scale: tuple[float, float] | None = None,
+    forced_face_scale: tuple[float, float] | None = None,
 ) -> None:
     """Plot the mesh and decide to save and/or show the mesh or not."""
     fig, _ax = _get_plot_pbc_mesh(
@@ -236,6 +270,9 @@ def _plot_pbc_mesh(
         vertices_cmap_name,
         vertices_size,
         title,
+        forced_vertex_scale,
+        forced_edge_scale,
+        forced_face_scale,
     )
 
     if save:
@@ -261,6 +298,9 @@ def _get_plot_pbc_mesh(
     vertices_cmap_name: str = "spring",
     vertices_size: float = 20,
     title: str = "",
+    forced_vertex_scale: tuple[float, float] | None = None,
+    forced_edge_scale: tuple[float, float] | None = None,
+    forced_face_scale: tuple[float, float] | None = None,
 ) -> tuple[Figure, Axes]:
     """Get the matplotlib figure and and ax for one plot."""
     # Fates not used for pbc.
@@ -269,9 +309,11 @@ def _get_plot_pbc_mesh(
 
     fig, _ = plt.subplots(layout="constrained")
     ax = plt.gca()
-    _plot_faces_pbc(mesh, fig, ax, face_plot, faces_cmap_name, face_parameters_name)
-    _plot_edges_pbc(mesh, fig, ax, edge_plot, edges_cmap_name, edges_width, edge_parameters_name)
-    _plot_vertices_pbc(mesh, fig, ax, vertex_plot, vertices_cmap_name, vertices_size, vertex_parameters_name)
+    _plot_faces_pbc(mesh, fig, ax, face_plot, faces_cmap_name, face_parameters_name, forced_face_scale)
+    _plot_edges_pbc(mesh, fig, ax, edge_plot, edges_cmap_name, edges_width, edge_parameters_name, forced_edge_scale)
+    _plot_vertices_pbc(
+        mesh, fig, ax, vertex_plot, vertices_cmap_name, vertices_size, vertex_parameters_name, forced_vertex_scale
+    )
 
     ax.set_title(title)
     ax.set_aspect(mesh.height / mesh.width)
@@ -282,7 +324,13 @@ def _get_plot_pbc_mesh(
 
 
 def _plot_faces_pbc(
-    mesh: PbcMesh, fig: Figure, ax: Axes, face_plot: FacePlot, faces_cmap_name: str, face_parameters_name: str
+    mesh: PbcMesh,
+    fig: Figure,
+    ax: Axes,
+    face_plot: FacePlot,
+    faces_cmap_name: str,
+    face_parameters_name: str,
+    forced_scale: tuple[float, float] | None = None,
 ) -> None:
     multicolor_cmap = _get_multicolor_face_cmap(mesh)
     faces_cmap = matplotlib.colormaps.get_cmap(faces_cmap_name)
@@ -302,8 +350,11 @@ def _plot_faces_pbc(
         case FacePlot.PERIMETER:
             values = mesh.get_perimeter(jnp.arange(mesh.nb_faces))
             cbar_label = "Perimeter of cell"
-    v_max = float(values.max())
-    v_min = float(values.min())
+    if forced_scale is None:
+        v_max = float(values.max())
+        v_min = float(values.min())
+    else:
+        v_min, v_max = forced_scale
     match face_plot:
         case FacePlot.MULTICOLOR | FacePlot.WHITE:
             pass
@@ -408,6 +459,7 @@ def _plot_edges_pbc(
     edges_cmap_name: str,
     edges_width: float,
     edge_parameters_name: str,
+    forced_scale: tuple[float, float] | None = None,
 ) -> None:
     if edge_plot != EdgePlot.INVISIBLE:
         edge_params_cmap = matplotlib.colormaps.get_cmap(edges_cmap_name)
@@ -425,8 +477,11 @@ def _plot_edges_pbc(
             case EdgePlot.LENGTH:
                 values = mesh.get_length(jnp.arange(2 * mesh.nb_edges))
                 cbar_label = "Length of edge"
-        v_max = float(values.max())
-        v_min = float(values.min())
+        if forced_scale is None:
+            v_max = float(values.max())
+            v_min = float(values.min())
+        else:
+            v_min, v_max = forced_scale
 
         match edge_plot:
             case EdgePlot.BLACK:
@@ -478,6 +533,7 @@ def _plot_vertices_pbc(
     vertices_cmap_name: str,
     vertices_size: float,
     vertex_parameters_name: str,
+    forced_scale: tuple[float, float] | None = None,
 ) -> None:
     if vertex_plot != VertexPlot.INVISIBLE:
         # set the correct colorbar
@@ -485,8 +541,11 @@ def _plot_vertices_pbc(
         v_max = 1
         v_min = 0
         if vertex_plot == VertexPlot.VERTEX_PARAMETER:
-            v_max = float(mesh.vertices_params.max())
-            v_min = float(mesh.vertices_params.min())
+            if forced_scale is None:
+                v_max = float(mesh.vertices_params.max())
+                v_min = float(mesh.vertices_params.min())
+            else:
+                v_min, v_max = forced_scale
             cbar = add_colorbar(fig, ax, v_min, v_max, vertices_params_cmap)
             cbar_label = "Vertex parameter" if vertex_parameters_name == "" else vertex_parameters_name
             cbar.ax.set_ylabel(cbar_label, rotation=270, labelpad=13)
@@ -523,6 +582,9 @@ def _plot_bounded_mesh(
     vertices_cmap_name: str = "spring",
     vertices_size: float = 20,
     title: str = "",
+    forced_vertex_scale: tuple[float, float] | None = None,
+    forced_edge_scale: tuple[float, float] | None = None,
+    forced_face_scale: tuple[float, float] | None = None,
 ) -> None:
     """Plot the mesh and decide to save and/or show the mesh or not."""
     fig, _ax = _get_plot_bounded_mesh(
@@ -539,6 +601,9 @@ def _plot_bounded_mesh(
         vertices_cmap_name,
         vertices_size,
         title,
+        forced_vertex_scale,
+        forced_edge_scale,
+        forced_face_scale,
     )
 
     if save:
@@ -564,13 +629,18 @@ def _get_plot_bounded_mesh(
     vertices_cmap_name: str = "spring",
     vertices_size: float = 20,
     title: str = "",
+    forced_vertex_scale: tuple[float, float] | None = None,
+    forced_edge_scale: tuple[float, float] | None = None,
+    forced_face_scale: tuple[float, float] | None = None,
 ) -> tuple[Figure, Axes]:
     """Get the matplotlib figure and and ax for one plot."""
     fig, _ = plt.subplots(layout="constrained")
     ax = plt.gca()
-    _plot_faces_bounded(mesh, fig, ax, face_plot, faces_cmap_name, face_parameters_name)
-    _plot_edges_bounded(mesh, fig, ax, edge_plot, edges_cmap_name, edges_width, edge_parameters_name)
-    _plot_vertices_bounded(mesh, fig, ax, vertex_plot, vertices_cmap_name, vertices_size, vertex_parameters_name)
+    _plot_faces_bounded(mesh, fig, ax, face_plot, faces_cmap_name, face_parameters_name, forced_face_scale)
+    _plot_edges_bounded(mesh, fig, ax, edge_plot, edges_cmap_name, edges_width, edge_parameters_name, forced_edge_scale)
+    _plot_vertices_bounded(
+        mesh, fig, ax, vertex_plot, vertices_cmap_name, vertices_size, vertex_parameters_name, forced_vertex_scale
+    )
 
     ax.set_title(title)
     # unlike the pbc case, here is not easy to know a priori
@@ -583,7 +653,13 @@ def _get_plot_bounded_mesh(
 
 
 def _plot_faces_bounded(
-    mesh: BoundedMesh, fig: Figure, ax: Axes, face_plot: FacePlot, faces_cmap_name: str, face_parameters_name: str
+    mesh: BoundedMesh,
+    fig: Figure,
+    ax: Axes,
+    face_plot: FacePlot,
+    faces_cmap_name: str,
+    face_parameters_name: str,
+    forced_scale: tuple[float, float] | None = None,
 ) -> None:
     multicolor_cmap = _get_multicolor_face_cmap(mesh)
     faces_cmap = matplotlib.colormaps.get_cmap(faces_cmap_name)
@@ -605,8 +681,11 @@ def _plot_faces_bounded(
             cbar_label = "Perimeter of cell"
         case FacePlot.FATES:
             values = mesh.faces[:, 1]
-    v_max = float(values.max())
-    v_min = float(values.min())
+    if forced_scale is None:
+        v_max = float(values.max())
+        v_min = float(values.min())
+    else:
+        v_min, v_max = forced_scale
     match face_plot:
         case FacePlot.MULTICOLOR | FacePlot.WHITE | FacePlot.FATES:
             pass
@@ -681,6 +760,7 @@ def _plot_edges_bounded(
     edges_cmap_name: str,
     edges_width: float,
     edge_parameters_name: str,
+    forced_scale: tuple[float, float] | None = None,
 ) -> None:
     if edge_plot != EdgePlot.INVISIBLE:
         edge_params_cmap = matplotlib.colormaps.get_cmap(edges_cmap_name)
@@ -697,8 +777,11 @@ def _plot_edges_bounded(
             case EdgePlot.LENGTH:
                 values = mesh.get_length(jnp.arange(2 * mesh.nb_edges))
                 cbar_label = "Length of edge"
-        v_max = float(values.max())
-        v_min = float(values.min())
+        if forced_scale is None:
+            v_max = float(values.max())
+            v_min = float(values.min())
+        else:
+            v_min, v_max = forced_scale
 
         # set the correct colorbar if needed
         match edge_plot:
@@ -756,6 +839,7 @@ def _plot_vertices_bounded(
     vertices_cmap_name: str,
     vertices_size: float,
     vertex_parameters_name: str,
+    forced_scale: tuple[float, float] | None = None,
 ) -> None:
     if vertex_plot != VertexPlot.INVISIBLE:
         # set the correct colorbar
@@ -763,8 +847,11 @@ def _plot_vertices_bounded(
         v_max = 1
         v_min = 0
         if vertex_plot == VertexPlot.VERTEX_PARAMETER:
-            v_max = float(mesh.vertices_params.max())
-            v_min = float(mesh.vertices_params.min())
+            if forced_scale is None:
+                v_max = float(mesh.vertices_params.max())
+                v_min = float(mesh.vertices_params.min())
+            else:
+                v_min, v_max = forced_scale
             cbar = add_colorbar(fig, ax, v_min, v_max, vertices_params_cmap)
             cbar_label = "Vertex parameter" if vertex_parameters_name == "" else vertex_parameters_name
             cbar.ax.set_ylabel(cbar_label, rotation=270, labelpad=13)
