@@ -475,10 +475,15 @@ def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray
     c is accepted for API compatibility but ignored — bounded_division
     recomputes the centroid internally via get_centroid().
 
+    u is the spindle axis; the cleavage line is PERPENDICULAR to it (as in real
+    cytokinesis), so the cut is made along the direction orthogonal to u.
+
     Raises ValueError if cell_division finds fewer than 2 intersections
     (degenerate geometry — caller should try another cell).
     """
-    alpha = float(np.arctan2(float(u[1]), float(u[0])))
+    # Cleavage line ⟂ spindle axis: cut along perp(u) = (-u_y, u_x).
+    cut = np.array([-float(u[1]), float(u[0])])
+    alpha = float(np.arctan2(cut[1], cut[0]))
 
     vT = jnp.array(mesh.vertices, dtype=jnp.float64)
     aT = jnp.array(mesh.angles, dtype=jnp.float64)

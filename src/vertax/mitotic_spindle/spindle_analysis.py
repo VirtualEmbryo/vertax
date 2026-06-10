@@ -29,7 +29,7 @@ import optax
 from vertax import BoundedMesh, BoundedBilevelOptimizer
 from vertax.topo import update_T1_bounded
 
-from energy_adaptive import energy_adaptive, outer_loss_homogenise
+from energy_adaptive import energy_adaptive
 from spindle_model import find_spindle
 from cell_division import divide_cell
 from mesh_utils import get_cell_segments
@@ -126,7 +126,6 @@ def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int,
 def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                     d_fraction: float = 0.3, n_gauss: int = 12,
                     max_opt_iter: int = 2000,
-                    n_outer_epochs: int = 3,
                     spindle_method: str = 'newton',
                     spindle_pdf_C: float = 0.1,
                     spindle_rng: np.random.Generator | None = None,
@@ -151,9 +150,6 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
     mesh_opt the mesh after mechanical relaxation + outer optimisation.
     Visualisation is handled separately (see tutorial.ipynb).
     """
-    # Initial total area = sum of all cell areas at start (kept as reference)
-    total_area = float(jnp.sum(mesh.get_area(jnp.arange(mesh.nb_faces))))
-
     current = mesh
     snapshots: list[tuple[BoundedMesh, BoundedMesh]] = []
     for i in range(n_divisions):
@@ -192,75 +188,26 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
         if jnp.any(jnp.isnan(areas)) or jnp.any(areas <= 0):
             print("Optimization skipped: invalid areas.")
         else:
-            # Target = initial_total_area / nb_faces_current
-            target_area = total_area / mesh_opt.nb_faces
-            print(f"Target area: {target_area:.4f} (initial total {total_area:.4f} / {mesh_opt.nb_faces} cells)")
+            # Fixed per-cell target area (no total-area target): every cell relaxes
+            # towards 0.6, so the tissue's total area grows as cells divide.
+            target_area = 0.6
+            print(f"Per-cell target area: {target_area:.4f} ({mesh_opt.nb_faces} cells "
+                  f"→ total target {target_area * mesh_opt.nb_faces:.4f})")
             mesh_opt.faces_params = jnp.full(mesh_opt.nb_faces, target_area)
 
-            mesh_backup = BoundedMesh.copy_mesh(mesh_opt)
-
-            schedule = optax.warmup_cosine_decay_schedule(
-                init_value=0.0, peak_value=8e-4,
-                warmup_steps=200, decay_steps=max_opt_iter, end_value=1e-6)
-            for solver, label in [(optax.adam(learning_rate=schedule), "Adam warmup-cosine"),
-                                  (optax.adam(learning_rate=1e-4), "Adam 1e-4"),
-                                  (optax.adam(learning_rate=1e-5), "Adam 1e-5")]:
-                candidate = BoundedMesh.copy_mesh(mesh_backup)
-                opt1 = BoundedBilevelOptimizer()
-                opt1.loss_function_inner = energy_adaptive
-                opt1.inner_solver        = solver
-                opt1.update_T1           = True
-                opt1._update_T1_func     = update_T1_bounded
-                opt1.min_dist_T1         = 0.08
-                opt1.max_nb_iterations   = max_opt_iter
-                opt1.tolerance           = 1e-6
-                opt1.patience            = 50
-                loss_hist = list(opt1.inner_optimization(candidate))
-                final_loss = float(loss_hist[-1])
-                verts = np.array(candidate.vertices)
-                if not math.isnan(final_loss) and not np.any(np.isnan(verts)):
-                    mesh_opt = candidate
-                    mid = float(loss_hist[len(loss_hist)//2])
-                    print(f"Optimization ({label}): {len(loss_hist)} iter, loss {float(loss_hist[0]):.4f} → {mid:.4f} → {final_loss:.4f}")
-                    break
-                print(f"Divergence ({label}) — retrying.")
-            else:
-                print("Optimization failed — keeping post-division mesh.")
-
-        # Outer optimisation: homogenise tensions (he_params) and area targets (face_params)
-        # Only run if inner converged reasonably (loss < 10 × nb_faces as heuristic)
-        inner_converged = not math.isnan(final_loss) and final_loss < 10.0 * mesh_opt.nb_faces
-        if n_outer_epochs > 0 and inner_converged:
-            mesh_pre_outer = BoundedMesh.copy_mesh(mesh_opt)
-            opt_outer = BoundedBilevelOptimizer()
-            opt_outer.loss_function_inner = energy_adaptive
-            opt_outer.loss_function_outer = outer_loss_homogenise
-            opt_outer.inner_solver        = optax.adam(learning_rate=optax.cosine_decay_schedule(5e-4, 200))
-            opt_outer.outer_solver        = optax.chain(
-                optax.clip_by_global_norm(1.0),
-                optax.adam(learning_rate=1e-4),
-            )
-            opt_outer.update_T1           = True
-            opt_outer._update_T1_func     = update_T1_bounded
-            opt_outer.min_dist_T1         = 0.08
-            opt_outer.max_nb_iterations   = 200
-            opt_outer.tolerance           = 1e-6
-            opt_outer.patience            = 20
-            # Clip bounds for face_params (area targets): allow ±50% around the mean target
-            target_area = total_area / mesh_opt.nb_faces
-            fp_min = jnp.float64(target_area * 0.5)
-            fp_max = jnp.float64(target_area * 1.5)
-
-            for epoch in range(n_outer_epochs):
-                opt_outer.bilevel_optimization(mesh_opt)
-                # Prevent face_params from drifting to degenerate values
-                mesh_opt.faces_params = jnp.clip(mesh_opt.faces_params, fp_min, fp_max)
-
-            if np.any(np.isnan(np.array(mesh_opt.vertices))):
-                print("Outer optimisation diverged (NaN vertices) — reverting to pre-outer mesh.")
-                mesh_opt = mesh_pre_outer
-            else:
-                print(f"Outer optimisation: {n_outer_epochs} epochs done")
+            # Same relaxation as the notebook's single-division step: SGD, lr=1e-3.
+            opt1 = BoundedBilevelOptimizer()
+            opt1.loss_function_inner = energy_adaptive
+            opt1.inner_solver        = optax.sgd(learning_rate=1e-3)
+            opt1.update_T1           = True
+            opt1._update_T1_func     = update_T1_bounded
+            opt1.min_dist_T1         = 0.01
+            opt1.max_nb_iterations   = max_opt_iter
+            opt1.tolerance           = 1e-6
+            opt1.patience            = 50
+            loss_hist = list(opt1.inner_optimization(mesh_opt))
+            print(f"Optimization (SGD 1e-3): {len(loss_hist)} iter, "
+                  f"loss {float(loss_hist[0]):.4f} → {float(loss_hist[-1]):.4f}")
 
         # After division, recalculate polarity from the relaxed mesh for the
         # next iteration — no explicit inheritance needed since _compute_polarity
