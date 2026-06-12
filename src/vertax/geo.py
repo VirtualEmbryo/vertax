@@ -326,7 +326,7 @@ def get_area_bounded(face: Array, vertTable: Array, angTable: Array, heTable: Ar
     final_carry, _ = jax.lax.scan(scan_body, initial_carry, xs)  # type: ignore
     _, final_res, _ = final_carry
 
-    return 0.5 * jnp.sum(jnp.abs(final_res))
+    return 0.5 * jnp.abs(jnp.sum(final_res))
 
 
 @jit
