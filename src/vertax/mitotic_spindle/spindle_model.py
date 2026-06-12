@@ -51,6 +51,8 @@ Contains:
                                  method ∈ {'newton', 'pdf', 'pdf_sample'}
 """
 
+import functools
+
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -90,12 +92,12 @@ def _ray_segment_length_jax(origin: jax.Array, direction: jax.Array,
     return jnp.where(valid, t, jnp.inf)
 
 
-@jax.jit
+@functools.partial(jax.jit, static_argnames=())
 def _centrosome_force_jax(centrosome: jax.Array,
                           v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
                           gauss_xi: jax.Array, gauss_wi: jax.Array,
-                          polarity_phi: jax.Array = jnp.float64(0.0),
-                          polarity_strength: jax.Array = jnp.float64(0.0),
+                          polarity_phi: jax.Array,
+                          polarity_strength: jax.Array,
                           ) -> tuple[jax.Array, jax.Array]:
     """Compute the total force and moment exerted by one centrosome.
 
