@@ -77,6 +77,65 @@ def _compute_polarity(mesh: BoundedMesh) -> tuple[np.ndarray, np.ndarray]:
     return polarity_phi
 
 
+def _edge_score_biased_axis(face_id: int, mesh: BoundedMesh, u_newton: np.ndarray,
+                            score_rng: np.random.Generator,
+                            draw_rng: np.random.Generator,
+                            kappa: float = 4.0, beta: float = 2.0,
+                            n_alpha: int = 361) -> np.ndarray:
+    """Bias the base Newton spindle axis with per-edge polarity scores.
+
+    Starting from the Newton orientation φ0 = angle(u_newton), build a density
+    over axis orientations α ∈ [-π/2, π/2]:
+
+        p(α) ∝ exp(κ·cos 2(α-φ0)) · exp(β·Σ_e w_e ℓ_e cos²(α-θ_e))
+
+    where each EDGE carries a single random score w_e (one per edge, shared by all
+    sub-segments of a curved arc), θ_e is its direction and ℓ_e its length. κ anchors
+    on the mechanically-balanced Newton axis, β is the polarity-bias strength; their
+    ratio sets the geometry-vs-polarity trade-off. φ is then drawn stochastically
+    from p(α). Returns the biased unit axis u = (cos φ, sin φ).
+    """
+    E = np.array(mesh.edges); V = np.array(mesh.vertices); ANG = np.array(mesh.angles)
+    from vertax.meshes.plot import _get_arc_with_n_points
+
+    edge_score: dict[int, float] = {}
+    seg_v0, seg_v1, seg_w = [], [], []
+    start = int(mesh.faces[face_id][0]); he = start; first = True
+    while first or he != start:
+        first = False
+        eid = he // 2
+        if eid not in edge_score:
+            edge_score[eid] = float(score_rng.uniform(0.0, 1.0))  # one score per edge
+        wv = edge_score[eid]
+        src = int(E[he, 3] + E[he, 5] - 2); tgt = int(E[he, 4] + E[he, 6] - 3)
+        if src >= 0 and tgt >= 0:
+            p0, p1 = V[src], V[tgt]
+            ang = float(ANG[eid])
+            if int(E[he, 3]) == 0 and ang > 0.01:  # surface arc -> sub-segments, same score
+                pts = [p0] + _get_arc_with_n_points(ang, p0, p1) + [p1]
+                for a, b in zip(pts[:-1], pts[1:]):
+                    seg_v0.append(a); seg_v1.append(b); seg_w.append(wv)
+            else:
+                seg_v0.append(p0); seg_v1.append(p1); seg_w.append(wv)
+        he = int(E[he, 1])
+
+    seg_v0 = np.array(seg_v0); seg_v1 = np.array(seg_v1); w = np.array(seg_w)
+    dirs = seg_v1 - seg_v0
+    theta = np.arctan2(dirs[:, 1], dirs[:, 0])
+    length = np.hypot(dirs[:, 0], dirs[:, 1])
+
+    phi0 = float(np.arctan2(u_newton[1], u_newton[0]))
+    phi0 = (phi0 + np.pi / 2) % np.pi - np.pi / 2
+
+    alphas = np.linspace(-np.pi / 2, np.pi / 2, n_alpha)
+    anchor = np.exp(kappa * np.cos(2 * (alphas - phi0)))
+    bias = np.exp(beta * np.array([np.sum(w * length * np.cos(a - theta) ** 2) for a in alphas]))
+    p = anchor * bias
+    p = p / p.sum()
+    phi = float(draw_rng.choice(alphas, p=p))
+    return np.array([np.cos(phi), np.sin(phi)])
+
+
 def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int,
                spindle_method: str = 'newton',
                spindle_pdf_C: float = 0.1,
@@ -131,6 +190,10 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                     spindle_rng: np.random.Generator | None = None,
                     cell_rng: np.random.Generator | None = None,
                     polarity_strength: float = 0.0,
+                    edge_bias: bool = False,
+                    edge_bias_kappa: float = 4.0,
+                    edge_bias_beta: float = 2.0,
+                    edge_bias_rng: np.random.Generator | None = None,
                     ) -> tuple[BoundedMesh, list[BoundedMesh]]:
     """Perform n_divisions successive cell divisions.
 
@@ -178,6 +241,15 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                                   rng=spindle_rng,
                                   polarity_phi=phi,
                                   polarity_strength=polarity_strength)
+
+        # Optionally bias the Newton axis with per-edge polarity scores.
+        if edge_bias:
+            _sr = edge_bias_rng if edge_bias_rng is not None else np.random.default_rng()
+            u = _edge_score_biased_axis(fid, current, np.asarray(u), _sr, _sr,
+                                        kappa=edge_bias_kappa, beta=edge_bias_beta)
+            print(f"  Edge-bias : φ={np.degrees(np.arctan2(u[1], u[0])):.1f}°  "
+                  f"(κ={edge_bias_kappa}, β={edge_bias_beta})")
+
         mesh_post, _ = divide_cell(current, fid, c, u)
 
         mesh_opt = BoundedMesh.copy_mesh(mesh_post)
