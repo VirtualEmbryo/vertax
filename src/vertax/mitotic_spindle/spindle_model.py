@@ -259,6 +259,116 @@ def spindle_orientation_pdf(
     return alphas, p
 
 
+# =====================================================================
+#  Théry et al. 2007 model (Nature 447:493, Supplementary Eqs. S1–S15)
+# =====================================================================
+
+def _thery_cortex(centroid, v0s, v1s, tensions, n_psi):
+    """Sample the cell cortex at uniform cortical angles ψ ∈ [-π, π).
+
+    For each ψ, cast a ray from the cell centre and find the first boundary
+    segment hit. Returns, per ψ:
+      R    : cortical position R⃗(ψ) relative to the centre   (n_psi, 2)
+      Fpsi : cortical force magnitude F(ψ); here the tension σ of the segment
+             reached at ψ (the tissue cue, Eq. S7 with F ∝ cortical cue)  (n_psi,)
+    Points with no hit get R=0 and F=0 so they drop out of the torque integral.
+    """
+    c = np.asarray(centroid, dtype=float)
+    v0 = np.asarray(v0s, dtype=float); v1 = np.asarray(v1s, dtype=float)
+    tens = np.asarray(tensions, dtype=float)
+    psis = np.linspace(-np.pi, np.pi, n_psi, endpoint=False)
+    R = np.zeros((n_psi, 2)); Fpsi = np.zeros(n_psi)
+    cj = jnp.asarray(c)
+    for i, psi in enumerate(psis):
+        dirn = jnp.array([np.cos(psi), np.sin(psi)])
+        Ls = np.array(jax.vmap(
+            lambda a, b: _ray_segment_length_jax(cj, dirn, a, b)
+        )(jnp.asarray(v0), jnp.asarray(v1)))
+        j = int(np.argmin(Ls)); L = Ls[j]
+        if np.isfinite(L):
+            R[i] = L * np.array([np.cos(psi), np.sin(psi)])
+            Fpsi[i] = tens[j]                       # F(ψ) = C·σ(ψ), C folded into d
+    return psis, R, Fpsi
+
+
+def thery_orientation_pdf(
+        centroid: np.ndarray,
+        v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
+        a: float,
+        d: float = 1.0,
+        n_phi: int = 180,
+        n_psi: int = 360,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Spindle-orientation density P(φ) of Théry et al. 2007 (Eqs. S1–S15).
+
+    Implements the exact statistical machinery of the supplement, with the
+    cortical force magnitude F(ψ) taken as the junctional tension of the vertex
+    model (a tissue-appropriate instance of their cortical cue, Eq. S7):
+
+      - cortical point R⃗(ψ) on the real cell boundary                      (S1)
+      - astral microtubule direction m⃗(ψ,φ): unit vector from the spindle
+        pole towards R⃗(ψ)                                                  (S2)
+      - angular MT density ρ_MT(θ)=(N_MT/2π)·dα/dθ with θ=ψ−φ, α the
+        emission angle at the pole; each pole emits only towards the half of
+        the cortex it faces                                                (S4)
+      - cortical force per angular element f⃗(ψ,φ)=F(ψ) ρ_MT(θ) m⃗(ψ,φ)      (S3)
+      - net torque τ_z(φ)=∫(R_x f_y − R_y f_x) dψ summed over both poles    (S5)
+      - potential W(φ)=−∫ τ_z dφ′                                          (S6)
+      - stationary distribution P(φ)=N exp(−W(φ)/d)                        (S12/S14)
+
+    Parameters
+    ----------
+    a       : spindle half-separation (poles at centre ± a·u(φ)); ratio a/R in S13
+    d       : dimensionless noise parameter (Eq. S15); larger d → flatter P(φ)
+    n_phi   : grid size for the spindle orientation φ ∈ [0, π]
+    n_psi   : grid size for the cortical angle ψ used in the torque integral
+
+    Returns (phis, P) with phis ∈ [0, π] and P normalised to unit integral.
+    """
+    c = np.asarray(centroid, dtype=float)
+    psis, R, Fpsi = _thery_cortex(c, v0s, v1s, tensions, n_psi)
+    dpsi = 2 * np.pi / n_psi
+    valid = Fpsi > 0.0   # cortical samples with an actual membrane hit
+
+    def torque(phi):
+        """Net torque τ_z(φ) summed over the two poles (Eqs. S3–S5)."""
+        u = np.array([np.cos(phi), np.sin(phi)])
+        tau = 0.0
+        for sgn in (+1.0, -1.0):
+            pole = sgn * a * u                       # pole position rel. to centre
+            mvec = R - pole                          # pole → cortex point
+            nrm = np.linalg.norm(mvec, axis=1)
+            mhat = mvec / np.where(nrm[:, None] > 1e-12, nrm[:, None], 1.0)
+
+            # Emission angle at the pole, α(ψ) = atan2(R⃗(ψ) − pole); ρ_MT ∝ |dα/dψ|
+            # (S4). Unwrap so the numerical derivative is well-defined on the ring.
+            alpha = np.unwrap(np.arctan2(mvec[:, 1], mvec[:, 0]))
+            dalpha = np.gradient(alpha, psis)        # dα/dψ
+            rho_mt = np.abs(dalpha)                  # (N_MT/2π factor folds into d)
+
+            # Each pole emits only towards the cortex half it faces (S4, finite
+            # angular span): keep points whose microtubule direction m⃗ points
+            # outward, i.e. aligns with the outward radial unit vector R̂(ψ).
+            Rn = np.linalg.norm(R, axis=1)
+            Rhat = R / np.where(Rn[:, None] > 1e-12, Rn[:, None], 1.0)
+            facing = np.sum(mhat * Rhat, axis=1) >= 0.0
+            mask = valid & facing
+
+            f = (Fpsi * rho_mt)[:, None] * mhat      # f⃗ = F(ψ)·ρ_MT(θ)·m⃗  (S3)
+            tau_psi = R[:, 0] * f[:, 1] - R[:, 1] * f[:, 0]   # R × f  (S5)
+            tau += np.sum(np.where(mask, tau_psi, 0.0)) * dpsi
+        return tau
+
+    phis = np.linspace(0.0, np.pi, n_phi)
+    taus = np.array([torque(p) for p in phis])
+    # W(φ) = −∫ τ dφ′  (cumulative trapezoid)
+    W = -np.cumsum(np.concatenate([[0.0], 0.5 * (taus[:-1] + taus[1:]) * np.diff(phis)]))
+    logP = -(W - W.min()) / d
+    P = np.exp(logP)
+    P /= np.trapz(P, phis)
+    return phis, P
+
+
 def _make_residual(v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
                    d: float, n_gauss: int = 12,
                    polarity_phi: float = 0.0, polarity_strength: float = 0.0):
@@ -410,23 +520,24 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
 
     elif method in ('pdf', 'pdf_sample'):
         try:
-            alphas, p = spindle_orientation_pdf(
-                c0, v0s, v1s, tensions, d,
-                C=pdf_C, n_alpha=pdf_n_alpha, n_gauss=n_gauss,
-                polarity_phi=polarity_phi, polarity_strength=polarity_strength,
+            # Théry et al. 2007 orientation density (Eqs. S1–S15), cortical force
+            # F(ψ) taken as junctional tension. pdf_C plays the role of the
+            # dimensionless noise d; the half-separation a is the spindle d.
+            alphas, p = thery_orientation_pdf(
+                c0, v0s, v1s, tensions, a=d,
+                d=pdf_C, n_phi=pdf_n_alpha, n_psi=2 * pdf_n_alpha,
             )
             if method == 'pdf':
                 phi = float(alphas[np.argmax(p)])
-                print(f"Cell {face_id} — spindle (pdf mode, α={np.degrees(phi):.1f}°)")
+                print(f"Cell {face_id} — spindle (Théry mode, α={np.degrees(phi):.1f}°)")
             else:
                 rng = rng or np.random.default_rng()
-                # sample from the discrete distribution
                 p_norm = p / p.sum()
                 phi = float(rng.choice(alphas, p=p_norm))
-                print(f"Cell {face_id} — spindle (pdf sample, α={np.degrees(phi):.1f}°)")
+                print(f"Cell {face_id} — spindle (Théry sample, α={np.degrees(phi):.1f}°)")
         except Exception as e:
             phi = phi0
-            print(f"Cell {face_id} — spindle (pdf fallback: {e})")
+            print(f"Cell {face_id} — spindle (Théry fallback: {e})")
         c = c0
         fallback = False   # centre stays at centroid, no additional check needed
 
