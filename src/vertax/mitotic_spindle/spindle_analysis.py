@@ -142,44 +142,28 @@ def _pick_face(mesh: BoundedMesh, d_fraction: float, n_gauss: int,
                spindle_rng: np.random.Generator | None = None,
                cell_rng: np.random.Generator | None = None,
                polarity_phi: np.ndarray | None = None,
-               polarity_strength: float = 0.0) -> int:
-    """Randomly select a cell and verify that division is feasible.
+               polarity_strength: float = 0.0) -> tuple[int, np.ndarray, np.ndarray]:
+    """Randomly select a cell and compute its mitotic spindle.
 
-    Tries cells in random order and returns the first one for which
-    find_spindle + divide_cell succeed without error.
-    Cells smaller than half the mean area are skipped to avoid creating
-    degenerate daughter cells.
-    Any unexpected error is re-raised immediately.
+    Picks one cell at random (cell_rng) and returns (fid, c, u): the cell id and
+    its spindle centre/axis from find_spindle. Any cell may be divided — there is
+    no feasibility pre-check or area filter, and no throw-away divide_cell trial
+    (geometric degeneracies, if any, are handled downstream by the caller).
 
-    cell_rng controls which cell is picked (permutation seed).
+    The spindle is computed here and returned so the caller does NOT recompute it.
+
+    cell_rng controls which cell is picked.
     spindle_rng controls the axis draw for pdf_sample method.
     """
-    face_ids = jnp.arange(mesh.nb_faces)
-    areas = np.array(mesh.get_area(face_ids))
-    mean_area = float(np.mean(areas))
-    min_area = mean_area / 2.0
-
     rng = cell_rng if cell_rng is not None else np.random.default_rng()
-    for fid in rng.permutation(mesh.nb_faces).tolist():
-        if areas[fid] < min_area:
-            print(f"  Cell {fid} skipped: area {areas[fid]:.4f} < min {min_area:.4f}")
-            continue
-        try:
-            phi = float(polarity_phi[fid]) if polarity_phi is not None else 0.0
-            c_test, u_test, _, _ = find_spindle(
-                fid, mesh, d_fraction, n_gauss,
-                method=spindle_method, pdf_C=spindle_pdf_C, rng=spindle_rng,
-                polarity_phi=phi, polarity_strength=polarity_strength,
-            )
-            divide_cell(mesh, fid, c_test, u_test)
-            return fid
-        except ValueError as e:
-            print(f"  Cell {fid} skipped: {e}")
-            continue
-        except Exception as e:
-            print(f"  Cell {fid} unexpected error ({type(e).__name__}): {e}")
-            raise
-    raise RuntimeError("No divisible cell found in the current mesh.")
+    fid = int(rng.permutation(mesh.nb_faces)[0])
+    phi = float(polarity_phi[fid]) if polarity_phi is not None else 0.0
+    c, u, _, _ = find_spindle(
+        fid, mesh, d_fraction, n_gauss,
+        method=spindle_method, pdf_C=spindle_pdf_C, rng=spindle_rng,
+        polarity_phi=phi, polarity_strength=polarity_strength,
+    )
+    return fid, c, u
 
 
 def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
@@ -194,6 +178,9 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                     edge_bias_kappa: float = 4.0,
                     edge_bias_beta: float = 2.0,
                     edge_bias_rng: np.random.Generator | None = None,
+                    inner_solver: optax.GradientTransformation | None = None,
+                    tolerance: float = 1e-6,
+                    patience: int = 50,
                     ) -> tuple[BoundedMesh, list[BoundedMesh]]:
     """Perform n_divisions successive cell divisions.
 
@@ -207,6 +194,15 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
     polarity_strength : p ∈ [0, 1] — how strongly the tension-derived polarity
         axis biases the spindle orientation. 0 = geometry only (default),
         1 = polarity doubles microtubule density along the principal tension axis.
+
+    inner_solver : optax solver used for the mechanical relaxation after each
+        division. None (default) reproduces the notebook's SGD(lr=1e-3); pass any
+        optax.GradientTransformation (e.g. optax.adam, nonlinear_cg, optax.lbfgs)
+        to benchmark alternative solvers.
+
+    tolerance, patience : early-stopping criterion for each inner relaxation. The
+        relaxation stops once the relative energy change stays below `tolerance`
+        for `patience` consecutive iterations (or `max_opt_iter` is reached).
 
     Returns (final_mesh, snapshots) where snapshots is a list of (mesh_post, mesh_opt)
     pairs — one per division — with mesh_post the topology right after division and
@@ -222,25 +218,20 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
         # Polarity axes from the current mechanical state (zero cost if p=0)
         polarity_phi = _compute_polarity(current) if polarity_strength > 0 else None
 
-        fid = _pick_face(current, d_fraction, n_gauss,
-                         spindle_method=spindle_method,
-                         spindle_pdf_C=spindle_pdf_C,
-                         spindle_rng=spindle_rng,
-                         cell_rng=cell_rng,
-                         polarity_phi=polarity_phi,
-                         polarity_strength=polarity_strength)
+        # _pick_face picks the cell AND computes its spindle (c, u); we reuse them
+        # directly instead of recomputing find_spindle here.
+        fid, c, u = _pick_face(current, d_fraction, n_gauss,
+                               spindle_method=spindle_method,
+                               spindle_pdf_C=spindle_pdf_C,
+                               spindle_rng=spindle_rng,
+                               cell_rng=cell_rng,
+                               polarity_phi=polarity_phi,
+                               polarity_strength=polarity_strength)
         print(f"Selected cell: {fid}")
 
         phi = float(polarity_phi[fid]) if polarity_phi is not None else 0.0
         if polarity_strength > 0:
             print(f"  Polarity  : φ={np.degrees(phi):.1f}°  p={polarity_strength:.2f}")
-
-        c, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss,
-                                  method=spindle_method,
-                                  pdf_C=spindle_pdf_C,
-                                  rng=spindle_rng,
-                                  polarity_phi=phi,
-                                  polarity_strength=polarity_strength)
 
         # Optionally bias the Newton axis with per-edge polarity scores.
         if edge_bias:
@@ -267,18 +258,20 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                   f"→ total target {target_area * mesh_opt.nb_faces:.4f})")
             mesh_opt.faces_params = jnp.full(mesh_opt.nb_faces, target_area)
 
-            # Same relaxation as the notebook's single-division step: SGD, lr=1e-3.
+            # Same relaxation as the notebook's single-division step. Default is
+            # SGD, lr=1e-3; an explicit inner_solver overrides it (for benchmarks).
+            solver = inner_solver if inner_solver is not None else optax.sgd(learning_rate=1e-3)
             opt1 = BoundedBilevelOptimizer()
             opt1.loss_function_inner = energy_adaptive
-            opt1.inner_solver        = optax.sgd(learning_rate=1e-3)
+            opt1.inner_solver        = solver
             opt1.update_T1           = True
             opt1._update_T1_func     = update_T1_bounded
             opt1.min_dist_T1         = 0.01
             opt1.max_nb_iterations   = max_opt_iter
-            opt1.tolerance           = 1e-6
-            opt1.patience            = 50
+            opt1.tolerance           = tolerance
+            opt1.patience            = patience
             loss_hist = list(opt1.inner_optimization(mesh_opt))
-            print(f"Optimization (SGD 1e-3): {len(loss_hist)} iter, "
+            print(f"Optimization: {len(loss_hist)} iter, "
                   f"loss {float(loss_hist[0]):.4f} → {float(loss_hist[-1]):.4f}")
 
         # After division, recalculate polarity from the relaxed mesh for the
