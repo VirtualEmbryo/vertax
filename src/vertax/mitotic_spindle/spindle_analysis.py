@@ -359,6 +359,179 @@ def run_n_divisions_parallel(mesh: BoundedMesh, n_waves: int, n_parallel: int,
     return current, snapshots
 
 
+def run_n_divisions_animated(mesh: BoundedMesh, n_divisions: int,
+                             relax_frames: int = 10,
+                             d_fraction: float = 0.3, n_gauss: int = 12,
+                             max_opt_iter: int = 2000,
+                             spindle_method: str = 'newton',
+                             spindle_pdf_C: float = 0.1,
+                             spindle_rng: np.random.Generator | None = None,
+                             cell_rng: np.random.Generator | None = None,
+                             inner_solver: optax.GradientTransformation | None = None,
+                             tolerance: float = 1e-6,
+                             patience: int = 50,
+                             ) -> tuple[BoundedMesh, list[dict]]:
+    """Like run_n_divisions, but captures intermediate frames for an animation.
+
+    For each division it records one 'division' frame (the mesh right after the
+    cut) followed by `relax_frames` 'relax' frames sampled along the relaxation.
+    The relaxation is run once with inner_opt_bounded_snapshots, which records the
+    mesh at EVERY iteration; we then sub-sample `relax_frames` of them on a
+    near-log schedule (dense at the start, where the motion is, sparse later).
+    This captures the TRUE continuous trajectory of any solver — including
+    fast-converging line-search solvers (CG, L-BFGS) — because the optimiser
+    state is never reset.
+
+    Returns (final_mesh, frames) where frames is a flat list of dicts:
+        {'mesh': BoundedMesh, 'kind': 'division'|'relax',
+         'division': i, 'sub': k, 'energy': float}
+    ready to feed a FuncAnimation (see tutorial.ipynb).
+    """
+    from vertax.opt_bounded import inner_opt_bounded_snapshots
+
+    current = mesh
+    frames: list[dict] = []
+    rng = cell_rng if cell_rng is not None else np.random.default_rng()
+    solver = inner_solver if inner_solver is not None else optax.sgd(learning_rate=1e-3)
+
+    def _energy(m: BoundedMesh) -> float:
+        return float(energy_adaptive(
+            jnp.asarray(m.vertices), jnp.asarray(m.angles), jnp.asarray(m.edges),
+            jnp.asarray(m.faces), None, None, None,
+            jnp.asarray(m.vertices_params), jnp.asarray(m.edges_params),
+            jnp.asarray(m.faces_params)))
+
+    def _log_indices(n_snap: int, n_pick: int) -> list[int]:
+        # Near-log sample of [0, n_snap-1]: dense early, sparse late; always
+        # includes the last (converged) snapshot. Deduplicated, sorted.
+        if n_snap <= n_pick:
+            return list(range(n_snap))
+        last = n_snap - 1
+        idx = {int(round((last) ** (t / (n_pick - 1)))) for t in range(n_pick)}
+        idx.add(last)
+        return sorted(idx)
+
+    for i in range(n_divisions):
+        print(f"\n{'='*50}\nDivision {i + 1}/{n_divisions}")
+
+        fid = int(rng.permutation(current.nb_faces)[0])
+        _, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss,
+                                  method=spindle_method, pdf_C=spindle_pdf_C, rng=spindle_rng)
+        # divide_cell ignores c (recomputes the centroid internally), so pass a dummy.
+        mesh_post, _ = divide_cell(current, fid, np.zeros(2), u)
+        mesh_post.faces_params = jnp.full(mesh_post.nb_faces, 0.6)
+
+        frames.append({'mesh': BoundedMesh.copy_mesh(mesh_post), 'kind': 'division',
+                       'division': i, 'sub': 0, 'energy': _energy(mesh_post)})
+
+        # One continuous relaxation, snapshotted at every iteration.
+        snaps, _losses = inner_opt_bounded_snapshots(
+            mesh_post.vertices, mesh_post.angles, mesh_post.edges, mesh_post.faces,
+            mesh_post.vertices_params, mesh_post.edges_params, mesh_post.faces_params,
+            L_in=energy_adaptive, solver=solver, min_dist_T1=0.01,
+            iterations_max=max_opt_iter, tolerance=tolerance, patience=patience,
+            update_T1_func=update_T1_bounded,
+        )
+
+        # Build a relaxed mesh from a snapshot (params are constant during relax).
+        def _mesh_from_snap(snap):
+            vt, at, ht, ft = snap
+            m = BoundedMesh.copy_mesh(mesh_post)
+            m.vertices, m.angles, m.edges, m.faces = vt, at, ht, ft
+            return m
+
+        for k, s_idx in enumerate(_log_indices(len(snaps), relax_frames), start=1):
+            m_k = _mesh_from_snap(snaps[s_idx])
+            frames.append({'mesh': m_k, 'kind': 'relax',
+                           'division': i, 'sub': k, 'energy': _energy(m_k)})
+
+        current = _mesh_from_snap(snaps[-1])
+    return current, frames
+
+
+def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_parallel: int,
+                                      relax_frames: int = 10,
+                                      d_fraction: float = 0.3, n_gauss: int = 12,
+                                      max_opt_iter: int = 2000,
+                                      spindle_method: str = 'newton',
+                                      spindle_pdf_C: float = 0.1,
+                                      spindle_rng: np.random.Generator | None = None,
+                                      cell_rng: np.random.Generator | None = None,
+                                      inner_solver: optax.GradientTransformation | None = None,
+                                      tolerance: float = 1e-6,
+                                      patience: int = 50,
+                                      ) -> tuple[BoundedMesh, list[dict]]:
+    """Animated parallel divisions: each wave divides `n_parallel` distinct cells
+    at once (one 'division' frame) then relaxes the tissue once, captured along the
+    way as `relax_frames` 'relax' frames (true continuous trajectory, log-sampled —
+    faithful for any solver). Combines run_n_divisions_parallel + the frame capture
+    of run_n_divisions_animated.
+
+    Returns (final_mesh, frames) with the same frame dicts as run_n_divisions_animated,
+    where 'division' indexes the WAVE.
+    """
+    from vertax.opt_bounded import inner_opt_bounded_snapshots
+
+    current = mesh
+    frames: list[dict] = []
+    rng = cell_rng if cell_rng is not None else np.random.default_rng()
+    solver = inner_solver if inner_solver is not None else optax.sgd(learning_rate=1e-3)
+
+    def _energy(m: BoundedMesh) -> float:
+        return float(energy_adaptive(
+            jnp.asarray(m.vertices), jnp.asarray(m.angles), jnp.asarray(m.edges),
+            jnp.asarray(m.faces), None, None, None,
+            jnp.asarray(m.vertices_params), jnp.asarray(m.edges_params),
+            jnp.asarray(m.faces_params)))
+
+    def _log_indices(n_snap: int, n_pick: int) -> list[int]:
+        if n_snap <= n_pick:
+            return list(range(n_snap))
+        last = n_snap - 1
+        idx = {int(round(last ** (t / (n_pick - 1)))) for t in range(n_pick)}
+        idx.add(last)
+        return sorted(idx)
+
+    for w in range(n_waves):
+        print(f"\n{'='*50}\nWave {w + 1}/{n_waves} — {n_parallel} simultaneous divisions")
+
+        k_cells = min(n_parallel, current.nb_faces)
+        fids = rng.permutation(current.nb_faces)[:k_cells].tolist()
+        us = []
+        for fid in fids:
+            _, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss,
+                                      method=spindle_method, pdf_C=spindle_pdf_C, rng=spindle_rng)
+            us.append(np.asarray(u))
+
+        mesh_post, _ = divide_cells(current, fids, us)
+        mesh_post.faces_params = jnp.full(mesh_post.nb_faces, 0.6)
+
+        frames.append({'mesh': BoundedMesh.copy_mesh(mesh_post), 'kind': 'division',
+                       'division': w, 'sub': 0, 'energy': _energy(mesh_post)})
+
+        snaps, _losses = inner_opt_bounded_snapshots(
+            mesh_post.vertices, mesh_post.angles, mesh_post.edges, mesh_post.faces,
+            mesh_post.vertices_params, mesh_post.edges_params, mesh_post.faces_params,
+            L_in=energy_adaptive, solver=solver, min_dist_T1=0.01,
+            iterations_max=max_opt_iter, tolerance=tolerance, patience=patience,
+            update_T1_func=update_T1_bounded,
+        )
+
+        def _mesh_from_snap(snap):
+            vt, at, ht, ft = snap
+            m = BoundedMesh.copy_mesh(mesh_post)
+            m.vertices, m.angles, m.edges, m.faces = vt, at, ht, ft
+            return m
+
+        for k, s_idx in enumerate(_log_indices(len(snaps), relax_frames), start=1):
+            m_k = _mesh_from_snap(snaps[s_idx])
+            frames.append({'mesh': m_k, 'kind': 'relax',
+                           'division': w, 'sub': k, 'energy': _energy(m_k)})
+
+        current = _mesh_from_snap(snaps[-1])
+    return current, frames
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(
