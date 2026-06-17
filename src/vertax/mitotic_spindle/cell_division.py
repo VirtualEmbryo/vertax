@@ -546,3 +546,79 @@ def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray
     new_mesh.faces_params = jnp.array(new_fp)
 
     return new_mesh, new_face_id
+
+
+def divide_cells(mesh: BoundedMesh, face_ids: list[int], us: list[np.ndarray]
+                 ) -> tuple['BoundedMesh', list[int]]:
+    """Divide several cells in ONE cell_division call (parallel/simultaneous cuts).
+
+    face_ids : indices of the cells to divide (on the current mesh).
+    us       : one spindle axis per cell; each cleavage line is ⟂ to its axis.
+
+    The cuts are applied by cell_division's internal fori_loop; axes are computed
+    by the caller on the current mesh. Returns (new_mesh, new_face_ids) where the
+    daughter faces are appended at nb_faces, nb_faces+1, ... in face_ids order.
+
+    Raises ValueError if cell_division completes fewer cuts than requested
+    (some cell had degenerate geometry).
+    """
+    n = len(face_ids)
+    if n == 0:
+        raise ValueError("divide_cells called with no faces")
+
+    # Cleavage line ⟂ spindle axis: cut along perp(u) = (-u_y, u_x).
+    alphas = [float(np.arctan2(float(u[0]), -float(u[1]))) for u in us]
+
+    vT = jnp.array(mesh.vertices, dtype=jnp.float64)
+    aT = jnp.array(mesh.angles, dtype=jnp.float64)
+    hT = jnp.array(mesh.edges, dtype=jnp.int32)
+    fT = jnp.array(mesh.faces, dtype=jnp.int32)
+
+    divOrders = jnp.array(face_ids, dtype=jnp.int32)
+    divAxes   = jnp.array(alphas,   dtype=jnp.float64)
+
+    padded_vT, padded_aT, padded_hT, padded_fT, he_idxes, face_idxes, n_done = cell_division(
+        vT, aT, hT, fT, divOrders, divAxes
+    )
+
+    n_done = int(n_done)
+    if n_done < n:
+        raise ValueError(f"cell_division completed {n_done}/{n} cuts "
+                         f"(degenerate geometry on some cell)")
+
+    # Each cut adds 2 vertices, 3 edges, 1 face. Daughter faces are appended.
+    new_face_ids = [mesh.nb_faces + k for k in range(n)]
+
+    num_verts_new = mesh.nb_vertices + 2 * n
+    num_edges_new = mesh.nb_edges    + 3 * n
+    num_hes_new   = num_edges_new * 2
+    num_faces_new = mesh.nb_faces    + n
+
+    new_mesh = BoundedMesh.__new__(BoundedMesh)
+    BoundedMesh.__init__(new_mesh)
+
+    new_mesh.vertices = jnp.array(padded_vT[:num_verts_new])
+    new_mesh.angles   = jnp.array(padded_aT[:num_edges_new])
+    new_mesh.edges    = jnp.array(padded_hT[:num_hes_new], dtype=jnp.int32)
+    new_mesh.faces    = jnp.array(padded_fT[:num_faces_new], dtype=jnp.int32)
+    new_mesh.width    = mesh.width
+    new_mesh.height   = mesh.height
+
+    # Params: extend by 2*n vertices, 3*n edges (division wall + 2 halves per cut),
+    # n faces (each daughter copies its parent's target area).
+    vp = np.array(mesh.vertices_params)
+    mean_vp = float(np.mean(vp)) if len(vp) > 0 else 0.0
+    new_mesh.vertices_params = jnp.array(np.append(vp, [mean_vp] * (2 * n)))
+
+    ep = np.array(mesh.edges_params)
+    mean_ep = float(np.mean(ep)) if len(ep) > 0 else 0.0
+    # Per cut: [wall (min tension -10), half, half].
+    new_ep = np.append(ep, np.tile([-10.0, mean_ep, mean_ep], n))
+    new_mesh.edges_params = jnp.array(new_ep)
+
+    fp = np.array(mesh.faces_params)
+    mean_fp = float(np.mean(fp)) if len(fp) > 0 else 0.6
+    parent_fps = [float(fp[f]) if len(fp) > f else mean_fp for f in face_ids]
+    new_mesh.faces_params = jnp.array(np.append(fp, parent_fps))
+
+    return new_mesh, new_face_ids

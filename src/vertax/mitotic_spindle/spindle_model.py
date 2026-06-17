@@ -500,18 +500,21 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
         params, res_norm = _newton(residual, np.array([c0[0], c0[1], phi0]))
 
         fallback = False
+        fallback_reason = ""
         if np.any(np.isnan(params)) or np.any(np.isinf(params)):
             fallback = True
+            fallback_reason = "Newton diverged (NaN/Inf)"
         else:
             cx, cy, phi = params
             c = np.array([cx, cy])
             if not poly_path.contains_point(c):
                 fallback = True
+                fallback_reason = "spindle centre outside the cell"
 
         if fallback:
             c   = c0
             phi = phi0
-            print(f"Cell {face_id} — spindle (fallback to geometric centroid)")
+            print(f"Cell {face_id} — spindle (fallback to geometric centroid: {fallback_reason})")
         else:
             print(f"Cell {face_id} — spindle (newton)")
 

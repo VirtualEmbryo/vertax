@@ -31,7 +31,7 @@ from vertax.topo import update_T1_bounded
 
 from energy_adaptive import energy_adaptive
 from spindle_model import find_spindle
-from cell_division import divide_cell
+from cell_division import divide_cell, divide_cells
 from mesh_utils import get_cell_segments
 
 
@@ -277,6 +277,82 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
         # After division, recalculate polarity from the relaxed mesh for the
         # next iteration — no explicit inheritance needed since _compute_polarity
         # always reads from the current tension field.
+
+        current = mesh_opt
+        snapshots.append((BoundedMesh.copy_mesh(mesh_post), BoundedMesh.copy_mesh(current)))
+    return current, snapshots
+
+
+def run_n_divisions_parallel(mesh: BoundedMesh, n_waves: int, n_parallel: int,
+                             d_fraction: float = 0.3, n_gauss: int = 12,
+                             max_opt_iter: int = 2000,
+                             spindle_method: str = 'newton',
+                             spindle_pdf_C: float = 0.1,
+                             spindle_rng: np.random.Generator | None = None,
+                             cell_rng: np.random.Generator | None = None,
+                             inner_solver: optax.GradientTransformation | None = None,
+                             tolerance: float = 1e-6,
+                             patience: int = 50,
+                             ) -> tuple[BoundedMesh, list[BoundedMesh]]:
+    """Simultaneous (parallel) cell divisions: each wave divides `n_parallel`
+    distinct cells in a SINGLE cell_division call, then relaxes the tissue ONCE.
+
+    This trades biological realism (cells are not relaxed between the cuts of a
+    wave — a synchronous mitosis model) for speed: `n_waves` relaxations instead
+    of `n_waves * n_parallel`, which is the dominant cost. Contrast with
+    run_n_divisions, which relaxes after every single division.
+
+    For each wave:
+      1. Pick `n_parallel` distinct cells at random (without replacement).
+      2. Compute each cell's spindle axis on the current mesh (find_spindle).
+      3. Divide them all at once (divide_cells -> one cell_division call).
+      4. Relax the whole tissue once (BoundedBilevelOptimizer.inner_optimization).
+
+    Returns (final_mesh, snapshots) with one (mesh_post, mesh_opt) pair per wave.
+    """
+    current = mesh
+    snapshots: list[tuple[BoundedMesh, BoundedMesh]] = []
+    rng = cell_rng if cell_rng is not None else np.random.default_rng()
+
+    for w in range(n_waves):
+        print(f"\n{'='*50}")
+        print(f"Wave {w + 1}/{n_waves} — dividing {n_parallel} cells simultaneously")
+
+        k = min(n_parallel, current.nb_faces)
+        fids = rng.permutation(current.nb_faces)[:k].tolist()
+
+        us = []
+        for fid in fids:
+            _, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss,
+                                      method=spindle_method, pdf_C=spindle_pdf_C,
+                                      rng=spindle_rng)
+            us.append(np.asarray(u))
+        print(f"Selected cells: {fids}")
+
+        mesh_post, _ = divide_cells(current, fids, us)
+
+        mesh_opt = BoundedMesh.copy_mesh(mesh_post)
+        areas = mesh_opt.get_area(jnp.arange(mesh_opt.nb_faces))
+        print(f"  Areas — min: {float(jnp.min(areas)):.4f}, max: {float(jnp.max(areas)):.4f}, "
+              f"NaN: {int(jnp.sum(jnp.isnan(areas)))}")
+        if jnp.any(jnp.isnan(areas)) or jnp.any(areas <= 0):
+            print("Optimization skipped: invalid areas.")
+        else:
+            target_area = 0.6
+            mesh_opt.faces_params = jnp.full(mesh_opt.nb_faces, target_area)
+            solver = inner_solver if inner_solver is not None else optax.sgd(learning_rate=1e-3)
+            opt1 = BoundedBilevelOptimizer()
+            opt1.loss_function_inner = energy_adaptive
+            opt1.inner_solver        = solver
+            opt1.update_T1           = True
+            opt1._update_T1_func     = update_T1_bounded
+            opt1.min_dist_T1         = 0.01
+            opt1.max_nb_iterations   = max_opt_iter
+            opt1.tolerance           = tolerance
+            opt1.patience            = patience
+            loss_hist = list(opt1.inner_optimization(mesh_opt))
+            print(f"Optimization: {len(loss_hist)} iter, "
+                  f"loss {float(loss_hist[0]):.4f} → {float(loss_hist[-1]):.4f}")
 
         current = mesh_opt
         snapshots.append((BoundedMesh.copy_mesh(mesh_post), BoundedMesh.copy_mesh(current)))
