@@ -174,7 +174,12 @@ def cell_division(vertTable: Array,
                   heTable: Array,
                   faceTable: Array,
                   divOrders: Array,
-                  divAxes: Array) -> Array:
+                  divAxes: Array,
+                  divCenters: Array | None = None) -> Array:
+    # divCenters: optional (num_divides, 2) array of cut centres. If None, each
+    # cut passes through the cell centroid (default). If given, the cut line for
+    # division i passes through divCenters[i] instead — lets the caller place the
+    # cleavage line off-centroid (e.g. at a Langevin-settled spindle centre).
     num_faces   = faceTable.shape[0]
     num_verts   = vertTable.shape[0]
     num_edges   = angTable.size
@@ -423,6 +428,8 @@ def cell_division(vertTable: Array,
         face = divOrders.at[i].get()
         start_he = faceTable_.at[face, 0].get()
         centroid = get_centroid(start_he, vertTable_, angTable_, heTable_)
+        if divCenters is not None:
+            centroid = divCenters.at[i].get()
         axis = divAxes.at[i].get()
         curv1 = heTable_.at[start_he, 3].get() == 0
         curv2 = False
@@ -468,12 +475,14 @@ def cell_division(vertTable: Array,
 # Public wrapper
 # ---------------------------------------------------------------------------
 
-def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray
+def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray,
+                use_center: bool = False
                 ) -> tuple['BoundedMesh', int]:
     """Divide cell face_id along axis u and return (new_mesh, new_face_id).
 
-    c is accepted for API compatibility but ignored — bounded_division
-    recomputes the centroid internally via get_centroid().
+    By default c is ignored and the cleavage line passes through the cell
+    centroid (recomputed internally). Pass use_center=True to make the cut pass
+    through the given c instead (e.g. a Langevin-settled spindle centre).
 
     u is the spindle axis; the cleavage line is PERPENDICULAR to it (as in real
     cytokinesis), so the cut is made along the direction orthogonal to u.
@@ -492,12 +501,13 @@ def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray
 
     divOrders = jnp.array([face_id], dtype=jnp.int32)
     divAxes   = jnp.array([alpha],   dtype=jnp.float64)
+    divCenters = jnp.array([c], dtype=jnp.float64) if use_center else None
     # Cast tables to int32 to avoid int32/int64 conflicts inside cell_division (x64 mode)
     hT = hT.astype(jnp.int32)
     fT = fT.astype(jnp.int32)
 
     padded_vT, padded_aT, padded_hT, padded_fT, he_idxes, face_idxes, n_done = cell_division(
-        vT, aT, hT, fT, divOrders, divAxes
+        vT, aT, hT, fT, divOrders, divAxes, divCenters
     )
 
     n_done = int(n_done)
@@ -548,12 +558,15 @@ def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray
     return new_mesh, new_face_id
 
 
-def divide_cells(mesh: BoundedMesh, face_ids: list[int], us: list[np.ndarray]
+def divide_cells(mesh: BoundedMesh, face_ids: list[int], us: list[np.ndarray],
+                 centers: list[np.ndarray] | None = None
                  ) -> tuple['BoundedMesh', list[int]]:
     """Divide several cells in ONE cell_division call (parallel/simultaneous cuts).
 
     face_ids : indices of the cells to divide (on the current mesh).
     us       : one spindle axis per cell; each cleavage line is ⟂ to its axis.
+    centers  : optional list of cut centres (one per cell); if given, each cut
+               passes through its centre instead of the cell centroid.
 
     The cuts are applied by cell_division's internal fori_loop; axes are computed
     by the caller on the current mesh. Returns (new_mesh, new_face_ids) where the
@@ -576,9 +589,10 @@ def divide_cells(mesh: BoundedMesh, face_ids: list[int], us: list[np.ndarray]
 
     divOrders = jnp.array(face_ids, dtype=jnp.int32)
     divAxes   = jnp.array(alphas,   dtype=jnp.float64)
+    divCenters = jnp.array(centers, dtype=jnp.float64) if centers is not None else None
 
     padded_vT, padded_aT, padded_hT, padded_fT, he_idxes, face_idxes, n_done = cell_division(
-        vT, aT, hT, fT, divOrders, divAxes
+        vT, aT, hT, fT, divOrders, divAxes, divCenters
     )
 
     n_done = int(n_done)

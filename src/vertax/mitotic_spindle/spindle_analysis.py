@@ -30,9 +30,9 @@ from vertax import BoundedMesh, BoundedBilevelOptimizer
 from vertax.topo import update_T1_bounded
 
 from energy_adaptive import energy_adaptive
-from spindle_model import find_spindle
+from spindle_model import find_spindle, spindle_langevin_trajectory
 from cell_division import divide_cell, divide_cells
-from mesh_utils import get_cell_segments
+from mesh_utils import get_cell_segments, get_face_polygon, polygon_centroid
 
 
 def _compute_polarity(mesh: BoundedMesh) -> tuple[np.ndarray, np.ndarray]:
@@ -451,6 +451,10 @@ def run_n_divisions_animated(mesh: BoundedMesh, n_divisions: int,
 
 def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_parallel: int,
                                       relax_frames: int = 10,
+                                      spindle_frames: int = 20,
+                                      langevin_C: float = 0.05,
+                                      start_offset: float = 0.3,
+                                      langevin_dt: float = 0.02,
                                       d_fraction: float = 0.3, n_gauss: int = 12,
                                       max_opt_iter: int = 2000,
                                       spindle_method: str = 'newton',
@@ -461,20 +465,29 @@ def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_paralle
                                       tolerance: float = 1e-6,
                                       patience: int = 50,
                                       ) -> tuple[BoundedMesh, list[dict]]:
-    """Animated parallel divisions: each wave divides `n_parallel` distinct cells
-    at once (one 'division' frame) then relaxes the tissue once, captured along the
-    way as `relax_frames` 'relax' frames (true continuous trajectory, log-sampled —
-    faithful for any solver). Combines run_n_divisions_parallel + the frame capture
-    of run_n_divisions_animated.
+    """Animated parallel divisions with a pre-division spindle phase.
 
-    Returns (final_mesh, frames) with the same frame dicts as run_n_divisions_animated,
-    where 'division' indexes the WAVE.
+    Each wave:
+      1. For every cell to divide, run a Langevin spindle dynamics
+         (spindle_langevin_trajectory) from a perturbed start (centre offset by
+         `start_offset`·radius, random axis) toward equilibrium — `spindle_frames`
+         'spindle' frames showing the centrosomes, centre and cleavage line
+         rotating/translating into place.
+      2. Cut every cell at its SETTLED (centre, axis) via divide_cells(centers=…),
+         so the cut is consistent with the animated spindle — one 'division' frame.
+      3. Relax the tissue once, captured as `relax_frames` 'relax' frames.
+
+    Returns (final_mesh, frames). Frame dicts:
+      {'mesh', 'kind': 'spindle'|'division'|'relax', 'division': wave, 'sub': k,
+       'energy': float, and for 'spindle' frames also 'spindles': list of
+       (centre(2,), axis_angle, d) for the cells being set up}.
     """
     from vertax.opt_bounded import inner_opt_bounded_snapshots
 
     current = mesh
     frames: list[dict] = []
     rng = cell_rng if cell_rng is not None else np.random.default_rng()
+    lrng = spindle_rng if spindle_rng is not None else np.random.default_rng()
     solver = inner_solver if inner_solver is not None else optax.sgd(learning_rate=1e-3)
 
     def _energy(m: BoundedMesh) -> float:
@@ -497,13 +510,46 @@ def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_paralle
 
         k_cells = min(n_parallel, current.nb_faces)
         fids = rng.permutation(current.nb_faces)[:k_cells].tolist()
-        us = []
-        for fid in fids:
-            _, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss,
-                                      method=spindle_method, pdf_C=spindle_pdf_C, rng=spindle_rng)
-            us.append(np.asarray(u))
 
-        mesh_post, _ = divide_cells(current, fids, us)
+        # --- Per cell: Langevin spindle dynamics toward equilibrium -------------
+        # trajectories[fid] = (cs (T+1,2), alphas (T+1,), d)
+        trajectories = {}
+        for fid in fids:
+            v0s, v1s, tensions = get_cell_segments(fid, current)
+            poly = get_face_polygon(fid, current)
+            c0 = polygon_centroid(poly)
+            radius = float(np.mean(np.linalg.norm(poly - c0, axis=1)))
+            d = d_fraction * radius
+            # Perturbed start: centre offset in a random direction, random axis.
+            ang = lrng.uniform(0, 2 * np.pi)
+            c_start = c0 + start_offset * radius * np.array([np.cos(ang), np.sin(ang)])
+            a_start = lrng.uniform(0, np.pi)
+            cs, als = spindle_langevin_trajectory(
+                c_start, a_start, v0s, v1s, tensions, d,
+                n_steps=spindle_frames, dt=langevin_dt, C=langevin_C,
+                rng=lrng, n_gauss=n_gauss, poly=poly)
+            trajectories[fid] = (cs, als, d)
+
+        # Spindle frames: the tissue is unchanged (still `current`); only the
+        # per-cell spindle overlays move. Each frame holds all cells' state at step t.
+        for t in range(spindle_frames + 1):
+            spindles = []
+            for fid in fids:
+                cs, als, d = trajectories[fid]
+                spindles.append((cs[t], float(als[t]), d))
+            frames.append({'mesh': BoundedMesh.copy_mesh(current), 'kind': 'spindle',
+                           'division': w, 'sub': t, 'energy': _energy(current),
+                           'spindles': spindles})
+
+        # --- Cut every cell at its settled (centre, axis) -----------------------
+        us, centers = [], []
+        for fid in fids:
+            cs, als, d = trajectories[fid]
+            a = float(als[-1])
+            us.append(np.array([np.cos(a), np.sin(a)]))
+            centers.append(np.asarray(cs[-1]))
+
+        mesh_post, _ = divide_cells(current, fids, us, centers=centers)
         mesh_post.faces_params = jnp.full(mesh_post.nb_faces, 0.6)
 
         frames.append({'mesh': BoundedMesh.copy_mesh(mesh_post), 'kind': 'division',
