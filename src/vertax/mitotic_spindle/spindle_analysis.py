@@ -30,7 +30,7 @@ from vertax import BoundedMesh, BoundedBilevelOptimizer
 from vertax.topo import update_T1_bounded
 
 from energy_adaptive import energy_adaptive
-from spindle_model import find_spindle, spindle_langevin_trajectory
+from spindle_model import find_spindle
 from cell_division import divide_cell, divide_cells
 from mesh_utils import get_cell_segments, get_face_polygon, polygon_centroid
 
@@ -452,12 +452,14 @@ def run_n_divisions_animated(mesh: BoundedMesh, n_divisions: int,
 def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_parallel: int,
                                       relax_frames: int = 10,
                                       spindle_frames: int = 20,
-                                      langevin_C: float = 0.05,
                                       start_offset: float = 0.3,
-                                      langevin_dt: float = 0.02,
+                                      method: str = 'newton',
+                                      polarity_strength: float = 1.0,
+                                      edge_bias_kappa: float = 4.0,
+                                      edge_bias_beta: float = 2.0,
+                                      edge_bias_rng: np.random.Generator | None = None,
                                       d_fraction: float = 0.3, n_gauss: int = 12,
                                       max_opt_iter: int = 2000,
-                                      spindle_method: str = 'newton',
                                       spindle_pdf_C: float = 0.1,
                                       spindle_rng: np.random.Generator | None = None,
                                       cell_rng: np.random.Generator | None = None,
@@ -468,13 +470,15 @@ def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_paralle
     """Animated parallel divisions with a pre-division spindle phase.
 
     Each wave:
-      1. For every cell to divide, run a Langevin spindle dynamics
-         (spindle_langevin_trajectory) from a perturbed start (centre offset by
-         `start_offset`·radius, random axis) toward equilibrium — `spindle_frames`
-         'spindle' frames showing the centrosomes, centre and cleavage line
-         rotating/translating into place.
-      2. Cut every cell at its SETTLED (centre, axis) via divide_cells(centers=…),
-         so the cut is consistent with the animated spindle — one 'division' frame.
+      1. For every cell to divide, compute the EXACT spindle (centre, axis) of the
+         chosen `method` (newton / thery / polarity / edge_score), then show it
+         easing deterministically (smoothstep) from a perturbed start (centre
+         offset by `start_offset`·radius, random axis) to that exact spindle —
+         `spindle_frames` 'spindle' frames with the centrosomes, centre and
+         cleavage line settling into place. No stochastic dynamics.
+      2. Cut every cell at its exact (centre, axis) via divide_cells(centers=…),
+         so e.g. Newton cuts ⟂ to the cell's long axis (Hertwig) — one 'division'
+         frame.
       3. Relax the tissue once, captured as `relax_frames` 'relax' frames.
 
     Returns (final_mesh, frames). Frame dicts:
@@ -511,23 +515,51 @@ def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_paralle
         k_cells = min(n_parallel, current.nb_faces)
         fids = rng.permutation(current.nb_faces)[:k_cells].tolist()
 
-        # --- Per cell: Langevin spindle dynamics toward equilibrium -------------
-        # trajectories[fid] = (cs (T+1,2), alphas (T+1,), d)
+        # Per-face polarity axes (only needed for the polarity method).
+        polarity_phi = _compute_polarity(current) if method == 'polarity' else None
+        ebrng = edge_bias_rng if edge_bias_rng is not None else np.random.default_rng()
+
+        def _target_spindle(fid):
+            """Exact spindle (centre c*, axis angle α*) for the chosen method —
+            deterministic, computed by the method itself (no noise). The cut uses
+            this exactly, so e.g. Newton cuts ⟂ to the cell's long axis (Hertwig)."""
+            if method == 'polarity':
+                phi = float(polarity_phi[fid])
+                c, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss,
+                                          method='newton', polarity_phi=phi,
+                                          polarity_strength=polarity_strength)
+            elif method == 'edge_score':
+                c, u0, _, _ = find_spindle(fid, current, d_fraction, n_gauss, method='newton')
+                u = _edge_score_biased_axis(fid, current, np.asarray(u0), ebrng, ebrng,
+                                            kappa=edge_bias_kappa, beta=edge_bias_beta)
+            else:  # 'newton' or 'thery'
+                spm = 'pdf' if method == 'thery' else 'newton'
+                c, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss, method=spm,
+                                          pdf_C=spindle_pdf_C, rng=spindle_rng)
+            return np.asarray(c, dtype=float), float(np.arctan2(u[1], u[0]))
+
+        # --- Per cell: DETERMINISTIC approach to the exact spindle --------------
+        # The spindle is shown easing from a perturbed start (offset centre, random
+        # axis) to the method's exact (c*, α*); no stochastic dynamics. The cut then
+        # uses (c*, α*) exactly. trajectories[fid] = (cs (T+1,2), alphas (T+1,), d).
         trajectories = {}
         for fid in fids:
-            v0s, v1s, tensions = get_cell_segments(fid, current)
             poly = get_face_polygon(fid, current)
             c0 = polygon_centroid(poly)
             radius = float(np.mean(np.linalg.norm(poly - c0, axis=1)))
             d = d_fraction * radius
-            # Perturbed start: centre offset in a random direction, random axis.
+            c_star, a_star = _target_spindle(fid)
+            # Perturbed start (visual only): offset centre + random axis.
             ang = lrng.uniform(0, 2 * np.pi)
             c_start = c0 + start_offset * radius * np.array([np.cos(ang), np.sin(ang)])
             a_start = lrng.uniform(0, np.pi)
-            cs, als = spindle_langevin_trajectory(
-                c_start, a_start, v0s, v1s, tensions, d,
-                n_steps=spindle_frames, dt=langevin_dt, C=langevin_C,
-                rng=lrng, n_gauss=n_gauss, poly=poly)
+            # Shortest signed rotation from a_start to a_star on the axis (period π).
+            da = (a_star - a_start + np.pi / 2) % np.pi - np.pi / 2
+            T = spindle_frames
+            ts = np.linspace(0.0, 1.0, T + 1)
+            ease = ts * ts * (3 - 2 * ts)          # smoothstep easing
+            cs = (1 - ease)[:, None] * c_start[None, :] + ease[:, None] * c_star[None, :]
+            als = a_start + ease * da
             trajectories[fid] = (cs, als, d)
 
         # Spindle frames: the tissue is unchanged (still `current`); only the
