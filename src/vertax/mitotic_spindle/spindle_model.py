@@ -556,22 +556,7 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
     if method == 'newton':
         residual = _make_residual(v0s, v1s, tensions, d, n_gauss,
                                   polarity_phi, polarity_strength, beta)
-        # Multi-start root-finding: R(c, φ) is non-smooth (L(θ) has a min), so a
-        # single Newton start can stall and some cells admit SEVERAL interior
-        # equilibria. Sweep 12 initial orientations spanning the axis [0, π); among
-        # all converged interior solutions keep the LEAST eccentric one (centre
-        # closest to the centroid) — the biologically sensible division site.
-        converged = []   # (params, res_norm, dist_to_centroid)
-        starts = phi0 + np.linspace(0, np.pi, 12, endpoint=False)
-        for phi_try in starts:
-            p_try, r_try = _newton(residual, np.array([c0[0], c0[1], float(phi_try)]))
-            if r_try < 1e-6 and np.all(np.isfinite(p_try)) \
-                    and poly_path.contains_point(p_try[:2]):
-                converged.append((p_try, r_try, float(np.linalg.norm(p_try[:2] - c0))))
-        if converged:
-            params, res_norm, _ = min(converged, key=lambda t: t[2])
-        else:
-            params, res_norm = np.array([c0[0], c0[1], phi0]), np.inf
+        params, res_norm = _newton(residual, np.array([c0[0], c0[1], phi0]))
 
         fallback = False
         fallback_reason = ""
