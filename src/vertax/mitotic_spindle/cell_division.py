@@ -544,9 +544,10 @@ def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray,
     # the two truncated halves inherit proportional angles set by cell_division
     ep = np.array(mesh.edges_params)
     mean_ep = float(np.mean(ep)) if len(ep) > 0 else 0.0
-    # Division wall: minimum tension (sigmoid(-10)+1 ≈ 1.0)
-    # Two edge segments: mean tension
-    new_ep = np.append(ep, [-10.0, mean_ep, mean_ep])
+    # edges_params here follow the SAME convention as the existing edges (the
+    # initial mesh stores 1 + sigmoid(...) ∈ [1, 2], NOT raw pre-sigmoid logits).
+    # Division wall: minimum tension 1.0; two truncated halves: mean tension.
+    new_ep = np.append(ep, [1.0, mean_ep, mean_ep])
     new_mesh.edges_params = jnp.array(new_ep)
 
     # Faces: 1 new face; copy the divided face's params for both daughter cells
@@ -626,8 +627,9 @@ def divide_cells(mesh: BoundedMesh, face_ids: list[int], us: list[np.ndarray],
 
     ep = np.array(mesh.edges_params)
     mean_ep = float(np.mean(ep)) if len(ep) > 0 else 0.0
-    # Per cut: [wall (min tension -10), half, half].
-    new_ep = np.append(ep, np.tile([-10.0, mean_ep, mean_ep], n))
+    # Per cut: [wall (min tension 1.0), half, half]. edges_params follow the
+    # initial mesh convention 1 + sigmoid(...) ∈ [1, 2], not raw logits.
+    new_ep = np.append(ep, np.tile([1.0, mean_ep, mean_ep], n))
     new_mesh.edges_params = jnp.array(new_ep)
 
     fp = np.array(mesh.faces_params)

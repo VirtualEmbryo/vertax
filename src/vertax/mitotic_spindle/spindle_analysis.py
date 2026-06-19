@@ -30,9 +30,9 @@ from vertax import BoundedMesh, BoundedBilevelOptimizer
 from vertax.topo import update_T1_bounded
 
 from energy_adaptive import energy_adaptive
-from spindle_model import find_spindle
+from spindle_model import find_spindle, _make_residual
 from cell_division import divide_cell, divide_cells
-from mesh_utils import get_cell_segments, get_face_polygon, polygon_centroid
+from mesh_utils import get_cell_segments, get_face_polygon, polygon_centroid, _inertia_axis
 
 
 def _compute_polarity(mesh: BoundedMesh) -> tuple[np.ndarray, np.ndarray]:
@@ -459,6 +459,7 @@ def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_paralle
                                       edge_bias_beta: float = 2.0,
                                       edge_bias_rng: np.random.Generator | None = None,
                                       d_fraction: float = 0.3, n_gauss: int = 12,
+                                      force_beta: float = 3.0,
                                       max_opt_iter: int = 2000,
                                       spindle_pdf_C: float = 0.1,
                                       spindle_rng: np.random.Generator | None = None,
@@ -512,71 +513,85 @@ def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_paralle
     for w in range(n_waves):
         print(f"\n{'='*50}\nWave {w + 1}/{n_waves} — {n_parallel} simultaneous divisions")
 
-        k_cells = min(n_parallel, current.nb_faces)
-        fids = rng.permutation(current.nb_faces)[:k_cells].tolist()
-
         # Per-face polarity axes (only needed for the polarity method).
         polarity_phi = _compute_polarity(current) if method == 'polarity' else None
         ebrng = edge_bias_rng if edge_bias_rng is not None else np.random.default_rng()
 
-        def _target_spindle(fid):
-            """Exact spindle (centre c*, axis angle α*) for the chosen method —
-            deterministic, computed by the method itself (no noise). The cut uses
-            this exactly, so e.g. Newton cuts ⟂ to the cell's long axis (Hertwig)."""
-            if method == 'polarity':
-                phi = float(polarity_phi[fid])
-                c, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss,
-                                          method='newton', polarity_phi=phi,
-                                          polarity_strength=polarity_strength)
-            elif method == 'edge_score':
-                c, u0, _, _ = find_spindle(fid, current, d_fraction, n_gauss, method='newton')
-                u = _edge_score_biased_axis(fid, current, np.asarray(u0), ebrng, ebrng,
-                                            kappa=edge_bias_kappa, beta=edge_bias_beta)
-            else:  # 'newton' or 'thery'
-                spm = 'pdf' if method == 'thery' else 'newton'
-                c, u, _, _ = find_spindle(fid, current, d_fraction, n_gauss, method=spm,
-                                          pdf_C=spindle_pdf_C, rng=spindle_rng)
-            return np.asarray(c, dtype=float), float(np.arctan2(u[1], u[0]))
+        k_cells = min(n_parallel, current.nb_faces)
+        fids = rng.permutation(current.nb_faces)[:k_cells].tolist()
 
-        # --- Per cell: DETERMINISTIC approach to the exact spindle --------------
-        # The spindle is shown easing from a perturbed start (offset centre, random
-        # axis) to the method's exact (c*, α*); no stochastic dynamics. The cut then
-        # uses (c*, α*) exactly. trajectories[fid] = (cs (T+1,2), alphas (T+1,), d).
+        # --- Per cell: find equilibrium with find_spindle, animate linearly -------
+        # find_spindle is robust (Newton from centroid+inertia axis, with fallback).
+        # The animation interpolates linearly from (centroid, inertia axis) to the
+        # converged solution — purely visual, residuals decrease monotonically.
+        # trajectories[fid] = (cs (T+1,2), alphas (T+1,), ds (T+1,)).
         trajectories = {}
         for fid in fids:
             poly = get_face_polygon(fid, current)
             c0 = polygon_centroid(poly)
             radius = float(np.mean(np.linalg.norm(poly - c0, axis=1)))
-            d = d_fraction * radius
-            c_star, a_star = _target_spindle(fid)
-            # Perturbed start (visual only): offset centre + random axis.
-            ang = lrng.uniform(0, 2 * np.pi)
-            c_start = c0 + start_offset * radius * np.array([np.cos(ang), np.sin(ang)])
-            a_start = lrng.uniform(0, np.pi)
-            # Shortest signed rotation from a_start to a_star on the axis (period π).
-            da = (a_star - a_start + np.pi / 2) % np.pi - np.pi / 2
+            d_max = d_fraction * radius
+            u0 = _inertia_axis(poly, c0)
+            a0 = float(np.arctan2(u0[1], u0[0]))
+            p_phi = float(polarity_phi[fid]) if method == 'polarity' else 0.0
+            p_str = polarity_strength if method == 'polarity' else 0.0
+            c_star, u_star, _, _ = find_spindle(
+                fid, current, d_fraction, n_gauss,
+                polarity_phi=p_phi, polarity_strength=p_str,
+                beta=force_beta,
+            )
+            a_star = float(np.arctan2(u_star[1], u_star[0]))
+            # Build the residual once per cell (re-used for every animation frame,
+            # avoiding a JAX recompilation on each frame).
+            v0s, v1s, tensions = get_cell_segments(fid, current)
+            res_fn = _make_residual(v0s, v1s, tensions, d_max, n_gauss, p_phi, p_str, force_beta)
+            # Shortest rotation on the axis (period π).
+            da = (a_star - a0 + np.pi / 2) % np.pi - np.pi / 2
+            # Linear interpolation from (c0, a0) to (c_star, a_star).
             T = spindle_frames
             ts = np.linspace(0.0, 1.0, T + 1)
-            ease = ts * ts * (3 - 2 * ts)          # smoothstep easing
-            cs = (1 - ease)[:, None] * c_start[None, :] + ease[:, None] * c_star[None, :]
-            als = a_start + ease * da
-            trajectories[fid] = (cs, als, d)
+            cs  = (1 - ts)[:, None] * c0[None, :] + ts[:, None] * c_star[None, :]
+            als = a0 + ts * da
+            # Per-frame d: clip so both centrosomes stay inside the cell polygon.
+            ds = np.empty(T + 1)
+            n_poly = len(poly)
+            for t in range(T + 1):
+                c_t = cs[t]
+                u_t = np.array([np.cos(als[t]), np.sin(als[t])])
+                max_d = d_max
+                for i in range(n_poly):
+                    p0, p1 = poly[i], poly[(i + 1) % n_poly]
+                    e = p1 - p0
+                    for sign in (1.0, -1.0):
+                        denom = sign * u_t[0] * e[1] - sign * u_t[1] * e[0]
+                        if abs(denom) < 1e-12:
+                            continue
+                        diff = p0 - c_t
+                        s = (diff[0] * e[1] - diff[1] * e[0]) / denom
+                        seg_t = (diff[0] * (-sign * u_t[1]) - diff[1] * (-sign * u_t[0])) / denom
+                        if s > 1e-9 and -1e-9 <= seg_t <= 1.0 + 1e-9:
+                            max_d = min(max_d, s * 0.9)
+                ds[t] = max(max_d, 0.0)
+            trajectories[fid] = (cs, als, ds, res_fn)
 
         # Spindle frames: the tissue is unchanged (still `current`); only the
         # per-cell spindle overlays move. Each frame holds all cells' state at step t.
         for t in range(spindle_frames + 1):
             spindles = []
+            residuals = {}  # fid -> (Fx, Fy, M)
             for fid in fids:
-                cs, als, d = trajectories[fid]
-                spindles.append((cs[t], float(als[t]), d))
+                cs, als, ds, res_fn = trajectories[fid]
+                spindles.append((cs[t], float(als[t]), float(ds[t])))
+                params = jnp.array([cs[t][0], cs[t][1], float(als[t])], dtype=jnp.float64)
+                residuals[fid] = np.array(res_fn(params), dtype=float)
             frames.append({'mesh': BoundedMesh.copy_mesh(current), 'kind': 'spindle',
                            'division': w, 'sub': t, 'energy': _energy(current),
-                           'spindles': spindles})
+                           'spindles': spindles, 'residuals': residuals})
 
         # --- Cut every cell at its settled (centre, axis) -----------------------
         us, centers = [], []
         for fid in fids:
-            cs, als, d = trajectories[fid]
+            cs, als, ds, _res_fn = trajectories[fid]
             a = float(als[-1])
             us.append(np.array([np.cos(a), np.sin(a)]))
             centers.append(np.asarray(cs[-1]))

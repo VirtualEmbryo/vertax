@@ -98,6 +98,7 @@ def _centrosome_force_jax(centrosome: jax.Array,
                           gauss_xi: jax.Array, gauss_wi: jax.Array,
                           polarity_phi: jax.Array,
                           polarity_strength: jax.Array,
+                          beta: jax.Array,
                           ) -> tuple[jax.Array, jax.Array]:
     """Compute the total force and moment exerted by one centrosome.
 
@@ -159,10 +160,12 @@ def _centrosome_force_jax(centrosome: jax.Array,
             L = jnp.min(lengths)
             contact = centrosome + L * direction   # contact point on the membrane
             # Gauss-point contribution to force and moment:
-            #   dF = Λ · L · ê · w · (Δα/2)
+            #   dF = Λ · Lᵝ · ê · w · (Δα/2)
             #   dM = (r × dF) = (contact × dF), 2-D scalar cross product
+            # The exponent β tunes how strongly microtubule length biases the pull:
+            # β=1 is linear, β>1 makes long microtubules dominate (more eccentric).
             polarity_bias = 1.0 + polarity_strength * jnp.cos(theta - polarity_phi) ** 2
-            dF  = tension * polarity_bias * L * direction * gauss_wi[g_idx] * half_da
+            dF  = tension * polarity_bias * (L ** beta) * direction * gauss_wi[g_idx] * half_da
             dM  = contact[0] * dF[1] - contact[1] * dF[0]
             valid = jnp.isfinite(L)   # ignore directions with no intersection
             return jnp.where(valid, dF, jnp.zeros(2)), jnp.where(valid, dM, 0.0)
@@ -180,7 +183,8 @@ def _torque_at_angle(alpha: float,
                      d: float,
                      gauss_xi: jax.Array, gauss_wi: jax.Array,
                      polarity_phi: float = 0.0,
-                     polarity_strength: float = 0.0) -> float:
+                     polarity_strength: float = 0.0,
+                     beta: float = 3.0) -> float:
     """Net torque M₁ + M₂ for a spindle centred at centroid with orientation α.
 
     The spindle axis is u = (cos α, sin α).  The two centrosomes are placed at
@@ -191,8 +195,9 @@ def _torque_at_angle(alpha: float,
     d_jax = jnp.float64(d)
     pp = jnp.float64(polarity_phi)
     ps = jnp.float64(polarity_strength)
-    _, M1 = _centrosome_force_jax(c + d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps)
-    _, M2 = _centrosome_force_jax(c - d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps)
+    bb = jnp.float64(beta)
+    _, M1 = _centrosome_force_jax(c + d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps, bb)
+    _, M2 = _centrosome_force_jax(c - d_jax * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps, bb)
     return float(M1 + M2)
 
 
@@ -371,7 +376,8 @@ def thery_orientation_pdf(
 
 def _make_residual(v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
                    d: float, n_gauss: int = 12,
-                   polarity_phi: float = 0.0, polarity_strength: float = 0.0):
+                   polarity_phi: float = 0.0, polarity_strength: float = 0.0,
+                   beta: float = 3.0):
     """Build the spindle equilibrium residual function (JIT-compiled).
 
     The residual is the 3-component vector we set to zero to find equilibrium:
@@ -391,14 +397,15 @@ def _make_residual(v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
     gauss_wi = jnp.array(wi, dtype=jnp.float64)
     pp = jnp.float64(polarity_phi)
     ps = jnp.float64(polarity_strength)
+    bb = jnp.float64(beta)
 
     @jax.jit
     def residual(params: jax.Array) -> jax.Array:
         cx, cy, phi = params[0], params[1], params[2]
         c  = jnp.array([cx, cy])
         u  = jnp.array([jnp.cos(phi), jnp.sin(phi)])
-        F1, M1 = _centrosome_force_jax(c + d * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps)
-        F2, M2 = _centrosome_force_jax(c - d * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps)
+        F1, M1 = _centrosome_force_jax(c + d * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps, bb)
+        F2, M2 = _centrosome_force_jax(c - d * u, v0s, v1s, tensions, gauss_xi, gauss_wi, pp, ps, bb)
         return jnp.array([F1[0] + F2[0], F1[1] + F2[1], M1 + M2])
 
     return residual
@@ -406,28 +413,79 @@ def _make_residual(v0s: jax.Array, v1s: jax.Array, tensions: jax.Array,
 
 def _newton(residual, x0: np.ndarray, max_iter: int = 30,
             tol: float = 1e-9) -> tuple[np.ndarray, float]:
-    """Solve residual(x) = 0 by Newton-Raphson.
+    """Solve residual(x) = 0 with MINPACK's hybrid (modified Powell) method.
 
-    At each iteration, the Jacobian J = ∂R/∂x is computed by automatic
-    differentiation (jax.jacobian), then the update is applied:
-
-        x ← x − J⁻¹ · R(x)
-
-    The Jacobian is a 3×3 matrix (3 equations, 3 unknowns: cx, cy, φ).
-    The linear system J·Δx = R is solved by jnp.linalg.solve (LU factorisation).
-    Convergence is reached when ‖R(x)‖₂ < tol.
+    scipy.optimize.root(method='hybr') is a trust-region dogleg solver that uses
+    the analytic Jacobian J = ∂R/∂x (computed by JAX autodiff) but, unlike plain
+    Newton-Raphson, never takes an unbounded step — so it does not blow up to
+    NaN/Inf on ill-conditioned cells. Falls back gracefully if it fails to
+    converge (caller checks the residual norm).
 
     Returns the solution vector and the final residual norm.
     """
+    from scipy.optimize import root
+
+    res_np = lambda x: np.asarray(residual(jnp.asarray(x, dtype=jnp.float64)), dtype=float)
     jac_fn = jax.jit(jax.jacobian(residual))
-    x = jnp.array(x0, dtype=jnp.float64)
+    jac_np = lambda x: np.asarray(jac_fn(jnp.asarray(x, dtype=jnp.float64)), dtype=float)
+
+    sol = root(res_np, np.asarray(x0, dtype=float), jac=jac_np,
+               method='hybr', tol=tol, options={'maxfev': max_iter * 10})
+    x = sol.x
+    return x, float(np.linalg.norm(res_np(x)))
+
+
+def _newton_history(residual, x0: np.ndarray, poly: np.ndarray,
+                    max_iter: int = 100, tol: float = 1e-9) -> list[np.ndarray]:
+    """Nonlinear conjugate gradient (Polak-Ribière) minimising f = ½‖R(x)‖².
+
+    ∇f = Jᵀ R.  Steps that move the centre outside `poly` are clipped to the
+    boundary along the search direction, guaranteeing the centre stays inside.
+
+    The first entry is x0, the last is the converged solution. At least 2 entries.
+    """
+    from matplotlib.path import Path
+    poly_path = Path(poly)
+
+    loss_and_grad = jax.jit(jax.value_and_grad(
+        lambda x: 0.5 * jnp.dot(residual(x), residual(x))
+    ))
+
+    x = np.array(x0, dtype=float)
+    history = [x.copy()]
+
+    f, g = loss_and_grad(jnp.array(x))
+    f, g = float(f), np.array(g)
+    d = -g  # initial search direction
+
     for _ in range(max_iter):
-        r = residual(x)
-        if float(jnp.linalg.norm(r)) < tol:
+        if np.linalg.norm(g) < tol:
             break
-        J = jac_fn(x)
-        x = x - jnp.linalg.solve(J, r)
-    return np.array(x), float(jnp.linalg.norm(residual(x)))
+
+        # Backtracking line search along d, clipped to stay inside poly.
+        alpha = 1.0
+        for _ in range(30):
+            x_new = x + alpha * d
+            if poly_path.contains_point(x_new[:2]):
+                f_new, g_new = loss_and_grad(jnp.array(x_new))
+                f_new, g_new = float(f_new), np.array(g_new)
+                if f_new < f:
+                    break
+            alpha *= 0.5
+        else:
+            break  # line search failed, converged as far as possible
+
+        x, f, g_old = x_new, f_new, g
+        g = g_new
+        history.append(x.copy())
+
+        # Polak-Ribière beta, reset to steepest descent if negative.
+        beta = max(0.0, float(np.dot(g, g - g_old) / (np.dot(g_old, g_old) + 1e-300)))
+        d = -g + beta * d
+
+    if len(history) == 1:
+        history.append(history[0])
+    return history
 
 
 def find_spindle(face_id: int, mesh: BoundedMesh,
@@ -439,6 +497,7 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
                  rng: np.random.Generator | None = None,
                  polarity_phi: float = 0.0,
                  polarity_strength: float = 0.0,
+                 beta: float = 3.0,
                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Find the equilibrium position of the mitotic spindle in cell face_id.
 
@@ -496,14 +555,34 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
 
     if method == 'newton':
         residual = _make_residual(v0s, v1s, tensions, d, n_gauss,
-                                  polarity_phi, polarity_strength)
-        params, res_norm = _newton(residual, np.array([c0[0], c0[1], phi0]))
+                                  polarity_phi, polarity_strength, beta)
+        # Multi-start root-finding: R(c, φ) is non-smooth (L(θ) has a min), so a
+        # single Newton start can stall and some cells admit SEVERAL interior
+        # equilibria. Sweep 12 initial orientations spanning the axis [0, π); among
+        # all converged interior solutions keep the LEAST eccentric one (centre
+        # closest to the centroid) — the biologically sensible division site.
+        converged = []   # (params, res_norm, dist_to_centroid)
+        starts = phi0 + np.linspace(0, np.pi, 12, endpoint=False)
+        for phi_try in starts:
+            p_try, r_try = _newton(residual, np.array([c0[0], c0[1], float(phi_try)]))
+            if r_try < 1e-6 and np.all(np.isfinite(p_try)) \
+                    and poly_path.contains_point(p_try[:2]):
+                converged.append((p_try, r_try, float(np.linalg.norm(p_try[:2] - c0))))
+        if converged:
+            params, res_norm, _ = min(converged, key=lambda t: t[2])
+        else:
+            params, res_norm = np.array([c0[0], c0[1], phi0]), np.inf
 
         fallback = False
         fallback_reason = ""
         if np.any(np.isnan(params)) or np.any(np.isinf(params)):
             fallback = True
             fallback_reason = "Newton diverged (NaN/Inf)"
+        elif res_norm > 1e-6:
+            # MINPACK stopped at a non-equilibrium point (|R| still large); the
+            # returned centre is meaningless and may sit in a corner. Fall back.
+            fallback = True
+            fallback_reason = f"not converged (|R|={res_norm:.1e})"
         else:
             cx, cy, phi = params
             c = np.array([cx, cy])
@@ -554,3 +633,21 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
     print(f"  Center    : ({cx:.4f}, {cy:.4f})")
     print(f"  Axis u    : ({u[0]:.4f}, {u[1]:.4f})")
     return c, u, c1, c2
+
+
+def eval_residual(face_id: int, mesh: BoundedMesh,
+                  c: np.ndarray, alpha: float,
+                  d_fraction: float = 0.3, n_gauss: int = 12,
+                  polarity_phi: float = 0.0, polarity_strength: float = 0.0,
+                  ) -> np.ndarray:
+    """Evaluate R(c, α) = [F₁ₓ+F₂ₓ, F₁ᵧ+F₂ᵧ, M₁+M₂] for the given spindle state.
+
+    Returns a (3,) array [Fx, Fy, M].
+    """
+    v0s, v1s, tensions = get_cell_segments(face_id, mesh)
+    poly = get_face_polygon(face_id, mesh)
+    c0 = polygon_centroid(poly)
+    d = float(d_fraction * np.mean(np.linalg.norm(poly - c0, axis=1)))
+    residual = _make_residual(v0s, v1s, tensions, d, n_gauss, polarity_phi, polarity_strength)
+    params = jnp.array([c[0], c[1], alpha], dtype=jnp.float64)
+    return np.array(residual(params), dtype=float)

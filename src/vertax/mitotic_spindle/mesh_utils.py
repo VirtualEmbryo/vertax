@@ -25,7 +25,12 @@ def get_face_polygon(face_id: int, mesh: BoundedMesh) -> np.ndarray:
 
     Returns an (N, 2) array of 2-D coordinates.
     """
-    return _get_face_vertices_bounded(mesh, face_id)
+    pts = _get_face_vertices_bounded(mesh, face_id)
+    # _get_face_vertices_bounded closes the polygon by duplicating the first vertex
+    # at the end; drop it so polygon_centroid receives an open contour.
+    if len(pts) > 1 and np.allclose(pts[0], pts[-1]):
+        pts = pts[:-1]
+    return pts
 
 
 def get_cell_segments(face_id: int, mesh: BoundedMesh
