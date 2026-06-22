@@ -29,8 +29,13 @@ K_OUTER_AREAS    = 10.0  # weight of area homogenisation in outer loss
 # lands on the chord) that is non-physical and breaks divide_cell. We add a
 # per-edge penalty K_CURV · tan²(α): ~0 for gentle arcs, diverging as α → π/2, so
 # the energy minimum always sits at a moderate curvature and the solver never
-# drives an angle to the singularity — no clipping needed.
-K_CURV = 0.05
+# drives an angle to the singularity — no clipping needed. At K_CURV=0.05 the
+# angles still crept to ~78° (close to the fragile regime where the line/arc cut in
+# divide_cell starts to fail, so the outcome depended on numerical noise and could
+# crash on some machines but not others). K_CURV=0.2 keeps the worst-case angle
+# well clear (~45°), a comfortable safety margin, while still allowing visible
+# membrane curvature.
+K_CURV = 0.2
 # Largest α the penalty is evaluated at; keeps tan() finite (the barrier is already
 # enormous here, so this only guards the arithmetic, it does not cap the physics).
 _CURV_ALPHA_MAX = float(jnp.pi / 2 - 1e-3)
