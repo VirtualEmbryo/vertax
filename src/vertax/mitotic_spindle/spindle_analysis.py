@@ -56,10 +56,7 @@ def _compute_polarity(mesh: BoundedMesh) -> tuple[np.ndarray, np.ndarray]:
     """
     polarity_phi = np.zeros(mesh.nb_faces)
     for fid in range(mesh.nb_faces):
-        try:
-            v0s, v1s, tensions = get_cell_segments(fid, mesh)
-        except Exception:
-            continue
+        v0s, v1s, tensions = get_cell_segments(fid, mesh)
         v0s_np = np.array(v0s)
         v1s_np = np.array(v1s)
         tensions_np = np.array(tensions)
@@ -181,6 +178,7 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
                     inner_solver: optax.GradientTransformation | None = None,
                     tolerance: float = 1e-6,
                     patience: int = 50,
+                    iters_out: list[int] | None = None,
                     ) -> tuple[BoundedMesh, list[BoundedMesh]]:
     """Perform n_divisions successive cell divisions.
 
@@ -203,6 +201,11 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
     tolerance, patience : early-stopping criterion for each inner relaxation. The
         relaxation stops once the relative energy change stays below `tolerance`
         for `patience` consecutive iterations (or `max_opt_iter` is reached).
+
+    iters_out : optional list; if given, the actual number of iterations run by
+        each per-division relaxation is appended to it (one entry per division, 0
+        when relaxation was skipped). Lets callers see how early stopping cut each
+        relaxation short of `max_opt_iter`.
 
     Returns (final_mesh, snapshots) where snapshots is a list of (mesh_post, mesh_opt)
     pairs — one per division — with mesh_post the topology right after division and
@@ -271,6 +274,10 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
             opt1.tolerance           = tolerance
             opt1.patience            = patience
             loss_hist = list(opt1.inner_optimization(mesh_opt))
+            # Actual iterations run by this relaxation. Early stopping (tolerance +
+            # patience) means this is usually < max_opt_iter; collect it if asked.
+            if iters_out is not None:
+                iters_out.append(len(loss_hist))
             print(f"Optimization: {len(loss_hist)} iter, "
                   f"loss {float(loss_hist[0]):.4f} → {float(loss_hist[-1]):.4f}")
 

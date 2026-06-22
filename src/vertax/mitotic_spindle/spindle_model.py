@@ -586,25 +586,21 @@ def find_spindle(face_id: int, mesh: BoundedMesh,
             print(f"  Residual  : {res_norm:.2e}")
 
     elif method in ('pdf', 'pdf_sample'):
-        try:
-            # Théry et al. 2007 orientation density (Eqs. S1–S15), cortical force
-            # F(ψ) taken as junctional tension. pdf_C plays the role of the
-            # dimensionless noise d; the half-separation a is the spindle d.
-            alphas, p = thery_orientation_pdf(
-                c0, v0s, v1s, tensions, a=d,
-                d=pdf_C, n_phi=pdf_n_alpha, n_psi=2 * pdf_n_alpha,
-            )
-            if method == 'pdf':
-                phi = float(alphas[np.argmax(p)])
-                print(f"Cell {face_id} — spindle (Théry mode, α={np.degrees(phi):.1f}°)")
-            else:
-                rng = rng or np.random.default_rng()
-                p_norm = p / p.sum()
-                phi = float(rng.choice(alphas, p=p_norm))
-                print(f"Cell {face_id} — spindle (Théry sample, α={np.degrees(phi):.1f}°)")
-        except Exception as e:
-            phi = phi0
-            print(f"Cell {face_id} — spindle (Théry fallback: {e})")
+        # Théry et al. 2007 orientation density (Eqs. S1–S15), cortical force
+        # F(ψ) taken as junctional tension. pdf_C plays the role of the
+        # dimensionless noise d; the half-separation a is the spindle d.
+        alphas, p = thery_orientation_pdf(
+            c0, v0s, v1s, tensions, a=d,
+            d=pdf_C, n_phi=pdf_n_alpha, n_psi=2 * pdf_n_alpha,
+        )
+        if method == 'pdf':
+            phi = float(alphas[np.argmax(p)])
+            print(f"Cell {face_id} — spindle (Théry mode, α={np.degrees(phi):.1f}°)")
+        else:
+            rng = rng or np.random.default_rng()
+            p_norm = p / p.sum()
+            phi = float(rng.choice(alphas, p=p_norm))
+            print(f"Cell {face_id} — spindle (Théry sample, α={np.degrees(phi):.1f}°)")
         c = c0
         fallback = False   # centre stays at centroid, no additional check needed
 

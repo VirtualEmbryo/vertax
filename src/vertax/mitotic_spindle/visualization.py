@@ -38,18 +38,15 @@ def _add_cell_labels(ax, mesh, offset_face=None):
     for fid in range(mesh.nb_faces):
         if areas[fid] < MIN_AREA:
             continue
-        try:
-            poly = get_face_polygon(fid, mesh)
-            c = polygon_centroid(poly)
-            if fid == offset_face:
-                ax.annotate(str(fid), c, fontsize=8, color='white', fontweight='bold',
-                            ha='center', va='center', zorder=20,
-                            xytext=(26, 46), textcoords='offset points')
-            else:
-                ax.text(c[0], c[1], str(fid), ha='center', va='center',
-                        fontsize=7, color='white', fontweight='bold', zorder=20)
-        except Exception:
-            continue
+        poly = get_face_polygon(fid, mesh)
+        c = polygon_centroid(poly)
+        if fid == offset_face:
+            ax.annotate(str(fid), c, fontsize=8, color='white', fontweight='bold',
+                        ha='center', va='center', zorder=20,
+                        xytext=(26, 46), textcoords='offset points')
+        else:
+            ax.text(c[0], c[1], str(fid), ha='center', va='center',
+                    fontsize=7, color='white', fontweight='bold', zorder=20)
 
 PLOT_KWARGS = dict(
     edge_plot=EdgePlot.EDGE_PARAMETER,

@@ -24,6 +24,17 @@ K_AREAS = 200
 K_OUTER_TENSIONS = 1.0   # weight of tension homogenisation in outer loss
 K_OUTER_AREAS    = 10.0  # weight of area homogenisation in outer loss
 
+# Curvature barrier. Each boundary edge is a circular arc whose half-central-angle
+# α ∈ [0, π/2). At α → π/2 the arc is a degenerate half-circle (the circle centre
+# lands on the chord) that is non-physical and breaks divide_cell. We add a
+# per-edge penalty K_CURV · tan²(α): ~0 for gentle arcs, diverging as α → π/2, so
+# the energy minimum always sits at a moderate curvature and the solver never
+# drives an angle to the singularity — no clipping needed.
+K_CURV = 0.05
+# Largest α the penalty is evaluated at; keeps tan() finite (the barrier is already
+# enormous here, so this only guards the arithmetic, it does not cap the physics).
+_CURV_ALPHA_MAX = float(jnp.pi / 2 - 1e-3)
+
 
 @jit
 def _cell_area_energy_adaptive(
@@ -98,7 +109,14 @@ def energy_adaptive(
     inner_energies   = jnp.sum(vmap(mapped_inner)(unique_edges, tensions))
     surface_energies = jnp.sum(vmap(mapped_surface)(edges, jnp.repeat(tensions, 2)))
 
-    return K_AREAS * area_energies + inner_energies + surface_energies
+    # Curvature barrier: K_CURV · Σ tan²(α) over edges (α = half central angle).
+    # Negligible for gentle arcs, diverges as α → π/2, keeping every arc well clear
+    # of the degenerate half-circle without any hard clipping.
+    alpha = jnp.clip(jnp.abs(angTable), 0.0, _CURV_ALPHA_MAX)
+    curvature_energy = jnp.sum(jnp.tan(alpha) ** 2)
+
+    return (K_AREAS * area_energies + inner_energies + surface_energies
+            + K_CURV * curvature_energy)
 
 
 def outer_loss_homogenise(
