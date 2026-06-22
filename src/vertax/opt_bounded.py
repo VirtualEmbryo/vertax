@@ -1,5 +1,6 @@
 """Optimization methods for VertAX (bounded version)."""
 
+import os
 from collections.abc import Callable
 from functools import partial
 
@@ -12,6 +13,15 @@ from scipy.sparse.linalg import LinearOperator, minres
 
 from vertax.method_enum import BilevelOptimizationMethod
 from vertax.topo import update_T1_bounded
+
+# Per-step cap on how far a single vertex may move during inner relaxation. The
+# incremental T1 transition detector assumes vertices move by small amounts each
+# iteration (comparable to min_dist_T1); line-search solvers (nonlinear_cg, lbfgs)
+# can otherwise take steps of order 1, letting a vertex jump across whole cells in
+# one iteration and producing tangled arcs / spurious-looking cells. Rescaling each
+# vertex displacement to at most this magnitude keeps every solver on a T1-safe scale
+# without changing the descent direction.
+MAX_VERTEX_STEP = float(os.environ.get("VERTAX_MAX_VERTEX_STEP", "0.05"))
 
 InnerLossFunctionBounded = Callable[
     [Array, Array, Array, Array, Array | None, Array | None, Array | None, Array, Array, Array], Array
@@ -231,7 +241,13 @@ def _minimize_bounded(  # noqa: C901
         # Apply updates to the chosen array on selected indices. No is_running
         # masking is needed: the while_loop body only runs while not should_stop.
         if argnums == 0:
-            vt = vt.at[sel].set(vt[sel] + updates[0].at[sel].get())
+            # Cap the per-step vertex move so large line-search steps (nonlinear_cg)
+            # stay on the scale the incremental T1 detector expects. Each vertex
+            # displacement is rescaled to at most MAX_VERTEX_STEP; angles ride along.
+            vstep = updates[0].at[sel].get()
+            vnorm = jnp.linalg.norm(vstep, axis=1, keepdims=True)
+            vscale = jnp.minimum(1.0, MAX_VERTEX_STEP / jnp.maximum(vnorm, 1e-12))
+            vt = vt.at[sel].set(vt[sel] + vstep * vscale)
             at = at + updates[1]
         elif argnums == 1:
             ht = ht.at[sel].set(ht[sel] + updates.at[sel].get())
@@ -835,7 +851,11 @@ def _minimize_ep_bounded(  # noqa: C901
 
         # Apply updates to the chosen array on selected indices
         if argnums == 0:
-            new_vt = vt.at[sel].set(vt[sel] + updates[0].at[sel].get())
+            # Cap the per-step vertex move (T1-safe scale); see MAX_VERTEX_STEP.
+            vstep = updates[0].at[sel].get()
+            vnorm = jnp.linalg.norm(vstep, axis=1, keepdims=True)
+            vscale = jnp.minimum(1.0, MAX_VERTEX_STEP / jnp.maximum(vnorm, 1e-12))
+            new_vt = vt.at[sel].set(vt[sel] + vstep * vscale)
             new_at = at + updates[1]
             vt = lax.cond(is_running, lambda: new_vt, lambda: vt)
             at = lax.cond(is_running, lambda: new_at, lambda: at)
