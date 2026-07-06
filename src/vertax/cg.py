@@ -72,7 +72,7 @@ class NonlinearCGState(NamedTuple):
     ls_state: Any  # zoom line-search inner state
 
 
-def nonlinear_cg(
+def cg_linesearch(
     restart_every: int = 10,
     max_linesearch_steps: int = 20,
 ) -> optax.GradientTransformationExtraArgs:
@@ -110,7 +110,7 @@ def nonlinear_cg(
     ) -> tuple[optax.Updates, NonlinearCGState]:
         if params is None or value is None or grad is None or value_fn is None:
             msg = (
-                "nonlinear_cg.update requires `params`, `value`, `grad` and "
+                "cg_linesearch.update requires `params`, `value`, `grad` and "
                 "`value_fn` (it performs a line search). Pass them from the loop."
             )
             raise ValueError(msg)
@@ -155,5 +155,72 @@ def nonlinear_cg(
             ls_state=ls_state,
         )
         return step_updates, new_state
+
+    return optax.GradientTransformationExtraArgs(init_fn, update_fn)  # ty:ignore[invalid-argument-type]
+
+
+class SGDLineSearchState(NamedTuple):
+    """State carried by the SGD + line-search solver between ``update`` calls."""
+
+    ls_state: Any  # zoom line-search inner state
+
+
+def sgd_linesearch(
+    max_linesearch_steps: int = 20,
+) -> optax.GradientTransformationExtraArgs:
+    """Steepest descent with a zoom (Wolfe) line search for the step size.
+
+    Plain gradient descent picks the search direction ``d = -g`` but leaves the
+    step size to a fixed learning rate. This solver keeps ``d = -g`` (no conjugate
+    term, unlike :func:`cg_linesearch`) but chooses the step by the same
+    ``optax.scale_by_zoom_linesearch`` used by CG / lbfgs, so each step satisfies
+    the strong Wolfe conditions instead of relying on a hand-tuned learning rate.
+
+    Like every line-search solver, its ``update`` requires ``value``, ``grad`` and
+    ``value_fn`` (it re-evaluates the loss along ``d``); the enclosing loop must
+    forward them, exactly as for :func:`cg_linesearch`.
+
+    Note (AD incompatibility): the zoom line search runs an inner
+    ``lax.while_loop`` with dynamic bounds, which reverse-mode AD cannot
+    differentiate through. So — like ``cg_linesearch`` — this solver is
+    incompatible with the AUTOMATIC_DIFFERENTIATION bilevel method; the factory
+    name contains ``"linesearch"`` so the guard in ``bilevelopt.py`` rejects the
+    combination automatically.
+    """
+    linesearch = optax.scale_by_zoom_linesearch(max_linesearch_steps=max_linesearch_steps)
+
+    def init_fn(params: optax.Params) -> SGDLineSearchState:
+        return SGDLineSearchState(ls_state=linesearch.init(params))
+
+    def update_fn(
+        updates: optax.Updates,  # = grad, by optax convention
+        state: SGDLineSearchState,
+        params: optax.Params | None = None,
+        *,
+        value: jax.Array | None = None,
+        grad: optax.Updates | None = None,
+        value_fn=None,
+        **extra_args: Any,
+    ) -> tuple[optax.Updates, SGDLineSearchState]:
+        if params is None or value is None or grad is None or value_fn is None:
+            msg = (
+                "sgd_linesearch.update requires `params`, `value`, `grad` and "
+                "`value_fn` (it performs a line search). Pass them from the loop."
+            )
+            raise ValueError(msg)
+
+        # Steepest-descent direction d = -g (always a valid descent direction).
+        d = otu.tree_scalar_mul(-1.0, grad)
+
+        # Zoom line search along d → updates = step · d.
+        step_updates, ls_state = linesearch.update(
+            updates=d,
+            state=state.ls_state,
+            params=params,
+            value=value,
+            grad=grad,
+            value_fn=value_fn,
+        )
+        return step_updates, SGDLineSearchState(ls_state=ls_state)
 
     return optax.GradientTransformationExtraArgs(init_fn, update_fn)  # ty:ignore[invalid-argument-type]

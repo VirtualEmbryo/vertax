@@ -97,14 +97,18 @@ class _BilevelOptimizer:
 
     @inner_solver.setter
     def inner_solver(self, new_inner_solver: optax.GradientTransformation) -> None:
+        # Line-search solvers (cg_linesearch, sgd_linesearch, ...) run an inner
+        # lax.while_loop with dynamic bounds, which reverse-mode AD cannot
+        # differentiate through — so they are incompatible with the AD bilevel
+        # method. Detected generically by the "linesearch" marker in their name.
         if (
-            "nonlinear_cg" in str(new_inner_solver)
+            "linesearch" in str(new_inner_solver)
             and self.bilevel_optimization_method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION
         ):
-            msg = f"[ WARNING ] The conjugate gradient inner solver is incompatible with the current optimization \
+            msg = f"[ WARNING ] A line-search inner solver is incompatible with the current optimization \
 method ({BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION}). As such the inner solver was not changed. \
 Current inner solver still is {self.inner_solver}. Change the optimization method if you want \
-to use the conjugate gradient inner solver."
+to use a line-search inner solver."
             print(msg, file=sys.stderr)
         else:
             self._inner_solver = new_inner_solver
@@ -116,8 +120,8 @@ to use the conjugate gradient inner solver."
 
     @bilevel_optimization_method.setter
     def bilevel_optimization_method(self, method: BilevelOptimizationMethod) -> None:
-        if "nonlinear_cg" in str(self.inner_solver) and method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
-            msg = f"[ WARNING ] The conjugate gradient inner solver is incompatible with the \
+        if "linesearch" in str(self.inner_solver) and method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
+            msg = f"[ WARNING ] A line-search inner solver is incompatible with the \
 {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} method. As such the method was not changed. \
 Current method still is {self.bilevel_optimization_method}. Change the inner solver if you want \
 to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization method."
