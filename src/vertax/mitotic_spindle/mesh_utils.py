@@ -53,7 +53,12 @@ def get_cell_segments(face_id: int, mesh: BoundedMesh
     heTable   = np.array(mesh.edges)
     faceTable = np.array(mesh.faces)
     verts     = np.array(mesh.vertices)
-    tensions  = np.array(mesh.edges_params)
+    # Physical junction tension Λ = sigmoid(edges_params) + 1 ∈ [1, 2], the SAME
+    # transform used everywhere else (energy_line_tensions_bounded, the tension colour scale):
+    # edges_params stores the raw, unbounded parameter. Using it directly as Λ was a
+    # bug — it let Λ be negative (microtubules pushing) and span huge ratios, which
+    # pulled the spindle far off the cell's long axis (breaking Hertwig's rule).
+    tensions  = np.asarray(jax.nn.sigmoid(jnp.asarray(mesh.edges_params)) + 1.0)
     angles    = np.array(mesh.angles)
 
     # Walk the face's half-edge loop in next order

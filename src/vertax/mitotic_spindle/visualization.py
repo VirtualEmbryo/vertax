@@ -57,7 +57,7 @@ PLOT_KWARGS = dict(
 
 # Common colour scales shared by every mesh plot in the notebook so colours are
 # directly comparable across all figures.
-#   - tension = sigmoid(he_params) + 1 is always in [1, 2] (see energy_adaptive),
+#   - tension = sigmoid(he_params) + 1 is always in [1, 2] (see energy_line_tensions_bounded),
 #     so its scale is fixed.
 #   - area scale spans the raw initial mesh (≈ 0.20–1.29); set by the notebook via
 #     set_area_scale() so it matches the "Initial mesh and relaxation" plot.
@@ -174,6 +174,21 @@ def _plot_spindle_fig(mesh_pre: BoundedMesh, face_id: int,
     plt.pause(0.001)
 
 
+def save_figure(fig, name, subdir="presentation/figs"):
+    """Save `fig` as a PNG under `<module dir>/<subdir>/<name>.png`.
+
+    The module lives in src/vertax/mitotic_spindle/, so figures land in
+    presentation/figs/ next to the LaTeX slides regardless of the notebook's CWD.
+    Returns the absolute path written.
+    """
+    import os
+    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), subdir)
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{name}.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    return path
+
+
 def _draw_mesh_on_ax(mesh, ax, face_scale, edge_scale, equal_aspect=True):
     """Draw a BoundedMesh (faces coloured by area, edges by tension) onto a given
     axis WITHOUT any colorbar.
@@ -199,18 +214,29 @@ def _draw_mesh_on_ax(mesh, ax, face_scale, edge_scale, equal_aspect=True):
         poly = _get_face_vertices_bounded(mesh, face)
         ax.fill(poly[:, 0], poly[:, 1], color=faces_cmap(norm))
 
-    # Edges, coloured by physical tension = sigmoid(he_params) + 1 ∈ [1, 2]
-    # (same transform as energy_adaptive; he_params raw can be negative — do NOT
-    # plot it directly or the colorbar shows misleading negative "tensions").
+    # Edges, coloured by physical tension = sigmoid(edges_params) + 1 ∈ [1, 2]
+    # (he_params raw can be negative — do NOT plot it directly or the colorbar
+    # shows misleading negative "tensions"). edges_params holds ONE value per edge
+    # (nb_edges entries), while we iterate over every half-edge (2 per edge), so a
+    # half-edge he maps to its edge's tension via values[he // 2]. Indexing with he
+    # directly was wrong: half-edges beyond nb_edges were silently clamped by JAX to
+    # the last entry, so late edges (e.g. the division wall) got an arbitrary colour
+    # unrelated to their real tension.
     values = jax.nn.sigmoid(mesh.edges_params) + 1.0
     for he in range(len(mesh.edges)):
-        norm = 1.0 if e_max == e_min else (float(values[he]) - e_min) / (e_max - e_min)
+        tension = float(values[he // 2])
+        norm = 1.0 if e_max == e_min else (tension - e_min) / (e_max - e_min)
         _draw_edge_bounded(mesh, ax, he, edges_cmap(norm), 2)
 
     ax.set_xlim(-0.5, mesh.width + 0.5)
     ax.set_ylim(-0.5, mesh.height + 0.5)
     if equal_aspect:
         ax.set_aspect("equal")
+        # Force a square axis BOX (in inches) so every panel in a grid has exactly
+        # the same frame size, even when callers later reset the data limits to a
+        # non-square tissue window (e.g. _fit_axes_to_mesh). set_aspect('equal')
+        # keeps the data undistorted; set_box_aspect(1) keeps the box square.
+        ax.set_box_aspect(1)
 
 
 def _plot_spindle_pair(mesh_pre: BoundedMesh, face_id: int,
@@ -297,6 +323,7 @@ def _plot_spindle_pair(mesh_pre: BoundedMesh, face_id: int,
 
     plt.draw()
     plt.pause(0.001)
+    return fig
 
 
 def _plot_div_relax_pair(mesh_post: BoundedMesh, mesh_opt: BoundedMesh,
@@ -334,6 +361,7 @@ def _plot_div_relax_pair(mesh_post: BoundedMesh, mesh_opt: BoundedMesh,
     fig.colorbar(sm_area, ax=(ax_div, ax_opt), label="Area of cell")
 
     plt.show()
+    return fig
 
 
 def _plot_post_div_fig(mesh_pre: BoundedMesh, mesh_post: BoundedMesh,

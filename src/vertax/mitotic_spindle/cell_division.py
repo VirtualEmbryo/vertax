@@ -476,7 +476,8 @@ def cell_division(vertTable: Array,
 # ---------------------------------------------------------------------------
 
 def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray,
-                use_center: bool = False
+                use_center: bool = False,
+                rng: np.random.Generator | None = None,
                 ) -> tuple['BoundedMesh', int]:
     """Divide cell face_id along axis u and return (new_mesh, new_face_id).
 
@@ -540,14 +541,25 @@ def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray,
     new_vp = np.append(vp, [mean_vp, mean_vp])
     new_mesh.vertices_params = jnp.array(new_vp)
 
-    # Edges: 3 new edges — division wall (index 0 = first new edge) gets low tension,
-    # the two truncated halves inherit proportional angles set by cell_division
+    # Edges: 3 new edges appended in order [division wall, half of A, half of B].
+    #   - The division wall inherits the tension of ONE of the two boundary edges
+    #     the cleavage line crossed, picked at random (50/50). he_idxes holds the
+    #     two crossed half-edges (he1, he2) returned by cell_division; the tension
+    #     parameter of a half-edge he is edges_params[he // 2] (2 half-edges/edge).
+    #     This keeps the wall's tension on the same scale/convention as the mesh's
+    #     own edges, whatever that convention is (raw logits or 1+sigmoid).
+    #   - Each crossed edge A (he1) and B (he2) is split in two: one half stays at
+    #     the original index (he_a//2 / he_b//2) and keeps t_a/t_b; the other half
+    #     is appended here. cell_division puts A's new half at index+1 and B's at
+    #     index+2, so they must inherit t_a and t_b — a single physical edge must
+    #     have ONE tension on both halves, not mean vs inherited (two-tone edge).
     ep = np.array(mesh.edges_params)
-    mean_ep = float(np.mean(ep)) if len(ep) > 0 else 0.0
-    # edges_params here follow the SAME convention as the existing edges (the
-    # initial mesh stores 1 + sigmoid(...) ∈ [1, 2], NOT raw pre-sigmoid logits).
-    # Division wall: minimum tension 1.0; two truncated halves: mean tension.
-    new_ep = np.append(ep, [1.0, mean_ep, mean_ep])
+    if rng is None:
+        rng = np.random.default_rng()
+    he_a, he_b = int(he_idxes[0]), int(he_idxes[1])
+    t_a, t_b = float(ep[he_a // 2]), float(ep[he_b // 2])
+    wall_ep = t_a if rng.random() < 0.5 else t_b
+    new_ep = np.append(ep, [wall_ep, t_a, t_b])
     new_mesh.edges_params = jnp.array(new_ep)
 
     # Faces: 1 new face; copy the divided face's params for both daughter cells
@@ -560,7 +572,8 @@ def divide_cell(mesh: BoundedMesh, face_id: int, c: np.ndarray, u: np.ndarray,
 
 
 def divide_cells(mesh: BoundedMesh, face_ids: list[int], us: list[np.ndarray],
-                 centers: list[np.ndarray] | None = None
+                 centers: list[np.ndarray] | None = None,
+                 rng: np.random.Generator | None = None,
                  ) -> tuple['BoundedMesh', list[int]]:
     """Divide several cells in ONE cell_division call (parallel/simultaneous cuts).
 
@@ -625,12 +638,40 @@ def divide_cells(mesh: BoundedMesh, face_ids: list[int], us: list[np.ndarray],
     mean_vp = float(np.mean(vp)) if len(vp) > 0 else 0.0
     new_mesh.vertices_params = jnp.array(np.append(vp, [mean_vp] * (2 * n)))
 
+    # Per cut, 3 edges are appended in order [division wall, half, half].
+    #   - The wall inherits, at random (50/50), the tension of one of the two
+    #     boundary edges that cut k crossed. cell_division stores the two crossed
+    #     half-edges of cut k at he_idxes[2k], he_idxes[2k+1]; a half-edge he maps
+    #     to tension parameter edges_params[he // 2]. This keeps the wall on the
+    #     mesh's own tension scale/convention rather than a hard-coded value.
+    #   - The two halves keep the mean-tension assignment.
+    #
+    # Cuts are applied sequentially by cell_division's fori_loop, and a later cut
+    # can cross an edge CREATED by an earlier cut in the same pass — its he_idxes
+    # then index past the original edges. So grow ep_ext as we go (each cut appends
+    # its 3 edges), and read the crossed-edge tension from ep_ext so those indices
+    # resolve. Any index still out of range (shouldn't happen) falls back to mean.
     ep = np.array(mesh.edges_params)
     mean_ep = float(np.mean(ep)) if len(ep) > 0 else 0.0
-    # Per cut: [wall (min tension 1.0), half, half]. edges_params follow the
-    # initial mesh convention 1 + sigmoid(...) ∈ [1, 2], not raw logits.
-    new_ep = np.append(ep, np.tile([1.0, mean_ep, mean_ep], n))
-    new_mesh.edges_params = jnp.array(new_ep)
+    if rng is None:
+        rng = np.random.default_rng()
+    he_idxes_np = np.asarray(he_idxes)
+    ep_ext = list(ep)
+    for k in range(n):
+        he_a, he_b = int(he_idxes_np[2 * k]), int(he_idxes_np[2 * k + 1])
+        ea, eb = he_a // 2, he_b // 2
+        t_a = ep_ext[ea] if ea < len(ep_ext) else mean_ep
+        t_b = ep_ext[eb] if eb < len(ep_ext) else mean_ep
+        # The two crossed edges A (final_he1) and B (final_he2) are each split in
+        # two: one half stays at the original edge index (ea/eb) and keeps t_a/t_b;
+        # the other half is appended as a NEW edge. cell_division puts A's new half
+        # at num_edges+3k+1 and B's at num_edges+3k+2 (see the angTable writes), so
+        # the appended halves must inherit t_a and t_b respectively — NOT mean_ep —
+        # otherwise a single physical edge ends up with two different tensions on
+        # its two halves (visible as a two-tone edge before any relaxation).
+        wall_ep = float(t_a if rng.random() < 0.5 else t_b)
+        ep_ext.extend([wall_ep, float(t_a), float(t_b)])
+    new_mesh.edges_params = jnp.array(np.asarray(ep_ext, dtype=float))
 
     fp = np.array(mesh.faces_params)
     mean_fp = float(np.mean(fp)) if len(fp) > 0 else 0.6

@@ -26,10 +26,9 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from vertax import BoundedMesh, BoundedBilevelOptimizer
+from vertax import BoundedMesh, BoundedBilevelOptimizer, energy_line_tensions_bounded
 from vertax.topo import update_T1_bounded
 
-from energy_adaptive import energy_adaptive
 from spindle_model import find_spindle, _make_residual
 from cell_division import divide_cell, divide_cells
 from mesh_utils import get_cell_segments, get_face_polygon, polygon_centroid, _inertia_axis
@@ -265,7 +264,7 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
             # SGD, lr=1e-3; an explicit inner_solver overrides it (for benchmarks).
             solver = inner_solver if inner_solver is not None else optax.sgd(learning_rate=1e-3)
             opt1 = BoundedBilevelOptimizer()
-            opt1.loss_function_inner = energy_adaptive
+            opt1.loss_function_inner = energy_line_tensions_bounded
             opt1.inner_solver        = solver
             opt1.update_T1           = True
             opt1._update_T1_func     = update_T1_bounded
@@ -349,7 +348,7 @@ def run_n_divisions_parallel(mesh: BoundedMesh, n_waves: int, n_parallel: int,
             mesh_opt.faces_params = jnp.full(mesh_opt.nb_faces, target_area)
             solver = inner_solver if inner_solver is not None else optax.sgd(learning_rate=1e-3)
             opt1 = BoundedBilevelOptimizer()
-            opt1.loss_function_inner = energy_adaptive
+            opt1.loss_function_inner = energy_line_tensions_bounded
             opt1.inner_solver        = solver
             opt1.update_T1           = True
             opt1._update_T1_func     = update_T1_bounded
@@ -402,7 +401,7 @@ def run_n_divisions_animated(mesh: BoundedMesh, n_divisions: int,
     solver = inner_solver if inner_solver is not None else optax.sgd(learning_rate=1e-3)
 
     def _energy(m: BoundedMesh) -> float:
-        return float(energy_adaptive(
+        return float(energy_line_tensions_bounded(
             jnp.asarray(m.vertices), jnp.asarray(m.angles), jnp.asarray(m.edges),
             jnp.asarray(m.faces), None, None, None,
             jnp.asarray(m.vertices_params), jnp.asarray(m.edges_params),
@@ -435,7 +434,7 @@ def run_n_divisions_animated(mesh: BoundedMesh, n_divisions: int,
         snaps, _losses = inner_opt_bounded_snapshots(
             mesh_post.vertices, mesh_post.angles, mesh_post.edges, mesh_post.faces,
             mesh_post.vertices_params, mesh_post.edges_params, mesh_post.faces_params,
-            L_in=energy_adaptive, solver=solver, min_dist_T1=0.01,
+            L_in=energy_line_tensions_bounded, solver=solver, min_dist_T1=0.01,
             iterations_max=max_opt_iter, tolerance=tolerance, patience=patience,
             update_T1_func=update_T1_bounded,
         )
@@ -503,7 +502,7 @@ def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_paralle
     solver = inner_solver if inner_solver is not None else optax.sgd(learning_rate=1e-3)
 
     def _energy(m: BoundedMesh) -> float:
-        return float(energy_adaptive(
+        return float(energy_line_tensions_bounded(
             jnp.asarray(m.vertices), jnp.asarray(m.angles), jnp.asarray(m.edges),
             jnp.asarray(m.faces), None, None, None,
             jnp.asarray(m.vertices_params), jnp.asarray(m.edges_params),
@@ -612,7 +611,7 @@ def run_n_divisions_parallel_animated(mesh: BoundedMesh, n_waves: int, n_paralle
         snaps, _losses = inner_opt_bounded_snapshots(
             mesh_post.vertices, mesh_post.angles, mesh_post.edges, mesh_post.faces,
             mesh_post.vertices_params, mesh_post.edges_params, mesh_post.faces_params,
-            L_in=energy_adaptive, solver=solver, min_dist_T1=0.01,
+            L_in=energy_line_tensions_bounded, solver=solver, min_dist_T1=0.01,
             iterations_max=max_opt_iter, tolerance=tolerance, patience=patience,
             update_T1_func=update_T1_bounded,
         )
