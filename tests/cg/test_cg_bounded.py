@@ -32,7 +32,7 @@ def create_optimizer() -> BoundedBilevelOptimizer:
     bop.tolerance = 0.00001
     bop.patience = 5
     bop.inner_solver = optax.sgd(learning_rate=0.01)
-    # bop.inner_solver = nonlinear_cg(restart_every=10)
+    # bop.inner_solver = cg_linesearch(restart_every=10)
     bop.outer_solver = optax.adam(learning_rate=0.0001, nesterov=True)
     bop.bilevel_optimization_method = BilevelOptimizationMethod.ADJOINT_STATE
     bop.loss_function_outer = cost_ratio

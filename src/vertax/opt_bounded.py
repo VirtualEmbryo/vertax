@@ -16,7 +16,7 @@ from vertax.topo import update_T1_bounded
 
 # Per-step cap on how far a single vertex may move during inner relaxation. The
 # incremental T1 transition detector assumes vertices move by small amounts each
-# iteration (comparable to min_dist_T1); line-search solvers (nonlinear_cg, lbfgs)
+# iteration (comparable to min_dist_T1); line-search solvers (cg_linesearch, sgd_linesearch, lbfgs)
 # can otherwise take steps of order 1, letting a vertex jump across whole cells in
 # one iteration and producing tangled arcs / spurious-looking cells. Rescaling each
 # vertex displacement to at most this magnitude keeps every solver on a T1-safe scale
@@ -242,7 +242,7 @@ def _minimize_bounded(  # noqa: C901
         # Apply updates to the chosen array on selected indices. No is_running
         # masking is needed: the while_loop body only runs while not should_stop.
         if argnums == 0:
-            # Cap the per-step vertex move so large line-search steps (nonlinear_cg)
+            # Cap the per-step vertex move so large line-search steps (cg_linesearch, sgd_linesearch)
             # stay on the scale the incremental T1 detector expects. Each vertex
             # displacement is rescaled to at most MAX_VERTEX_STEP; angles ride along.
             vstep = updates[0].at[sel].get()
