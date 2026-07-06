@@ -21,7 +21,7 @@ SINA = jnp.sin(ROT_ANGLE)
 COSA = jnp.cos(ROT_ANGLE)
 
 
-@partial(jit, static_argnums=(3, 4, 8))
+@partial(jit, static_argnums=(3, 4, 8, 13))
 def update_T1(  # noqa: N802
     vertTable: Array,
     heTable: Array,
@@ -36,6 +36,7 @@ def update_T1(  # noqa: N802
     selected_verts: Array | None,
     selected_hes: Array | None,
     selected_faces: Array | None,
+    perform_energy_check: bool = False,
 ) -> tuple[Array, Array, Array]:
     """Detect and apply T1 topological changes."""
     # if selected_verts is None:
@@ -76,8 +77,8 @@ def update_T1(  # noqa: N802
         should_update = heTable_new[he_prev, 0] != he[1]
         twin_should_update = heTable_new[twin_he_prev, 0] != twin_he[1]
 
-        def update_state(_state: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
-            vertTable_new, heTable_new, faceTable_new = _state
+        def update_state(_state: tuple[Array, Array, Array, bool]) -> tuple[Array, Array, Array]:
+            vertTable_new, heTable_new, faceTable_new, perform_energy_check = _state
 
             ## heTable
             # he
@@ -210,7 +211,7 @@ def update_T1(  # noqa: N802
                 face_params,
             )
 
-            vertTable_new, heTable_new, faceTable_new = _state
+            vertTable_new, heTable_new, faceTable_new, perform_energy_check = _state
 
             # he
             x_source_he = vertTable_new[he[3], 0]
@@ -292,7 +293,7 @@ def update_T1(  # noqa: N802
 
             # Accept the update only if L_in_after < L_in_before
             return jax.lax.cond(
-                L_in_T1 <= L_in_no_T1,
+                (L_in_T1 <= L_in_no_T1) | ~perform_energy_check,
                 lambda _: (vertTable_new_T1, heTable_new_T1, faceTable_new_T1),
                 lambda _: (vertTable_new_no_T1, heTable_new_no_T1, faceTable_new_no_T1),
                 None,
@@ -301,8 +302,8 @@ def update_T1(  # noqa: N802
         vertTable_new, heTable_new, faceTable_new = jax.lax.cond(
             (distance <= min_dist_T1) & should_update & twin_should_update,
             update_state,
-            lambda _state: _state,
-            (vertTable_new, heTable_new, faceTable_new),
+            lambda _state: _state[:3],
+            (vertTable_new, heTable_new, faceTable_new, perform_energy_check),
         )
 
         return vertTable_new, heTable_new, faceTable_new  # ty:ignore[invalid-return-type]
@@ -331,6 +332,7 @@ def do_not_update_T1(  # noqa: N802
     selected_verts: Array | None,  # noqa: ARG001
     selected_hes: Array | None,  # noqa: ARG001
     selected_faces: Array | None,  # noqa: ARG001
+    perform_energy_check: bool = False,  # noqa: ARG001
 ) -> tuple[Array, Array, Array]:
     """Do nothing function."""
     return vertTable, heTable, faceTable
@@ -353,6 +355,7 @@ def update_T1_bounded(  # noqa: C901, N802
     selected_verts: Array | None = None,  # noqa: ARG001
     selected_hes: Array | None = None,  # noqa: ARG001
     selected_faces: Array | None = None,  # noqa: ARG001
+    perform_energy_check: bool = False,  # noqa: ARG001
 ) -> tuple[Array, Array, Array, Array]:
     """Find and apply T1 topological transitions for bounded meshes."""
     num_edges = heTable.shape[0] // 2
@@ -992,6 +995,7 @@ def do_not_update_T1_bounded(  # noqa: N802
     selected_verts: Array | None = None,  # noqa: ARG001
     selected_hes: Array | None = None,  # noqa: ARG001
     selected_faces: Array | None = None,  # noqa: ARG001
+    perform_energy_check: bool = False,  # noqa: ARG001
 ) -> tuple[Array, Array, Array, Array]:
     """Do nothing function for bounded meshes."""
     return vertTable, angTable, heTable, faceTable
