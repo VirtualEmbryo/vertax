@@ -99,14 +99,14 @@ def nonlinear_cg(
         )
 
     def update_fn(
-        updates: optax.Updates,  # = grad, by optax convention
+        updates: optax.Updates,  # = grad, by optax convention  # noqa: ARG001
         state: NonlinearCGState,
         params: optax.Params | None = None,
         *,
         value: jax.Array | None = None,
         grad: optax.Updates | None = None,
-        value_fn=None,
-        **extra_args: Any,
+        value_fn=None,  # noqa: ANN001
+        **extra_args: Any,  # noqa: ANN401, ARG001
     ) -> tuple[optax.Updates, NonlinearCGState]:
         if params is None or value is None or grad is None or value_fn is None:
             msg = (

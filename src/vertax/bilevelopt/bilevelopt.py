@@ -97,14 +97,18 @@ class _BilevelOptimizer:
 
     @inner_solver.setter
     def inner_solver(self, new_inner_solver: optax.GradientTransformation) -> None:
-        if (
+        if self.bilevel_optimization_method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION and (
             "nonlinear_cg" in str(new_inner_solver)
-            and self.bilevel_optimization_method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION
+            or (
+                isinstance(new_inner_solver, optax.GradientTransformationExtraArgs)
+                and _check_solver_is_LBFGS(new_inner_solver)
+            )
         ):
-            msg = f"[ WARNING ] The conjugate gradient inner solver is incompatible with the current optimization \
+            msg = f"[ WARNING ] The conjugate gradient or LBFGS inner solver \
+is incompatible with the current optimization \
 method ({BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION}). As such the inner solver was not changed. \
 Current inner solver still is {self.inner_solver}. Change the optimization method if you want \
-to use the conjugate gradient inner solver."
+to use the conjugate gradient or LBFGS inner solver."
             print(msg, file=sys.stderr)
         else:
             self._inner_solver = new_inner_solver
@@ -116,8 +120,14 @@ to use the conjugate gradient inner solver."
 
     @bilevel_optimization_method.setter
     def bilevel_optimization_method(self, method: BilevelOptimizationMethod) -> None:
-        if "nonlinear_cg" in str(self.inner_solver) and method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
-            msg = f"[ WARNING ] The conjugate gradient inner solver is incompatible with the \
+        if method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION and (
+            "nonlinear_cg" in str(self.inner_solver)
+            or (
+                isinstance(self.inner_solver, optax.GradientTransformationExtraArgs)
+                and _check_solver_is_LBFGS(self.inner_solver)
+            )
+        ):
+            msg = f"[ WARNING ] The conjugate gradient or LBFGS inner solver is incompatible with the \
 {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} method. As such the method was not changed. \
 Current method still is {self.bilevel_optimization_method}. Change the inner solver if you want \
 to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization method."
@@ -544,3 +554,12 @@ def _apply_perm_to_state(
     tgt = perm[heTable[:, 4].astype(jnp.int32)].astype(heTable.dtype)
     new_heTable = heTable.at[:, 3].set(src).at[:, 4].set(tgt)
     return new_vertTable, new_heTable
+
+
+def _check_solver_is_LBFGS(solver: optax.GradientTransformation) -> bool:  # noqa: N802
+    """Dirty hack to identify an optax.LBFGS solver."""
+    result = False
+    try:
+        result = solver.init([])[0].__class__.__name__ == "ScaleByLBFGSState"  # ty:ignore[not-subscriptable]
+    finally:
+        return result  # noqa: B012
