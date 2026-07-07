@@ -445,7 +445,7 @@ def cost_ad_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
 ) -> tuple[Array, tuple[Array, Array, Array]]:
     """Automatic differentiation cost function."""
-    heTable_before = heTable
+    # heTable_before = heTable
 
     (vertTable, angTable, heTable, faceTable), _ = inner_opt_bounded(
         vertTable,
@@ -467,13 +467,13 @@ def cost_ad_bounded(
         update_T1_func,
     )
 
-    perm = _build_t1_repair_perm(
-        vertTable,
-        vertTable_target,
-        heTable_before,
-        heTable,
-    )
-    vertTable, heTable = _apply_perm_to_state(perm, vertTable, heTable)
+    # perm = _build_t1_repair_perm(
+    #     vertTable,
+    #     vertTable_target,
+    #     heTable_before,
+    #     heTable,
+    # )
+    # vertTable, heTable = _apply_perm_to_state(perm, vertTable, heTable)
 
     loss_out_value = L_out(
         vertTable,
@@ -617,7 +617,7 @@ def _loss_ep_static_bounded(
 
 
 @partial(jit, static_argnums=(7, 12, 13, 14, 15, 16, 17, 18, 23, 24, 25))
-def _minimize_ep_bounded(  # noqa: C901
+def _minimize_ep_bounded(
     vertTable: Array,
     angTable: Array,
     heTable: Array,
@@ -645,7 +645,18 @@ def _minimize_ep_bounded(  # noqa: C901
     argnums: int = 0,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
-    def loss_evaluated(vt: Array, at: Array, ht: Array, ft: Array, vp: Array, hp: Array, fp: Array) -> Array:
+    def loss_evaluated(
+        vt: Array,
+        at: Array,
+        ht: Array,
+        ft: Array,
+        selected_verts: Array,
+        selected_hes: Array,
+        selected_faces: Array,
+        vp: Array,
+        hp: Array,
+        fp: Array,
+    ) -> Array:
         return loss_fn(
             vt,
             at,
@@ -667,142 +678,7 @@ def _minimize_ep_bounded(  # noqa: C901
             beta,
         )
 
-    if selected_verts is None:
-        selected_verts = jnp.arange(vertTable.shape[0])
-    if selected_hes is None:
-        selected_hes = jnp.arange(heTable.shape[0])
-    if selected_faces is None:
-        selected_faces = jnp.arange(faceTable.shape[0])
-
-    iterations_max = int(iterations_max)
-    patience = int(patience)
-
-    # --- select the target array and indices for the optimizer ---
-    if argnums == 0:
-        x0, sel = vertTable, selected_verts
-    elif argnums == 2:
-        x0, sel = heTable, selected_hes
-    elif argnums == 3:
-        x0, sel = faceTable, selected_faces
-    elif argnums == 4:
-        x0, sel = vert_params, selected_verts
-    elif argnums == 5:
-        x0, sel = he_params, selected_hes
-    elif argnums == 6:
-        x0, sel = face_params, selected_faces
-    else:
-        msg = "argnums must be in {0,2,3,4,5,6}"
-        raise ValueError(msg)
-
-    # --- check if the target is float-type before differentiating ---
-    if not jnp.issubdtype(x0.dtype, jnp.floating):
-        msg = (
-            f"Cannot differentiate argnums={argnums}: "
-            f"target array has dtype {x0.dtype}. "
-            f"Use a float array (vertTable, vert_params, he_params, face_params) only."
-        )
-        raise TypeError(msg)
-
-    jacnums = argnums
-    if argnums == 0:
-        opt_state = solver.init((vertTable, angTable))
-        jacnums = [0, 1]
-    else:
-        opt_state = solver.init(x0)
-
-    # Initial loss and bookkeeping
-    initial_L = loss_evaluated(vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params)
-    L_in_list = jnp.zeros((iterations_max,)).at[0].set(initial_L)
-    prev_L_values = jnp.full((patience,), initial_L)
-    stagnation_count = jnp.array(0)
-    step_count = jnp.array(0)
-    should_stop = jnp.array(False)
-
-    @jit
-    def scan_step(
-        carry: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, int, Array, Array], i: int
-    ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, int, Array, Array], None]:
-        vt, at, ht, ft, vp, hp, fp, opt_state, prev_L_values, stagnation_count, step_count, should_stop, L_list = carry
-
-        is_running = jnp.logical_not(should_stop)
-
-        # Compute loss
-        L_current = loss_evaluated(vt, at, ht, ft, vp, hp, fp)
-
-        # Early stopping bookkeeping
-        denom = jnp.where(prev_L_values[-1] != 0, prev_L_values[-1], 1.0)
-        rel_var = jnp.abs((L_current - prev_L_values[-1]) / denom)
-        new_stagnation_count = jnp.where(rel_var < tolerance, stagnation_count + 1, 0)
-        new_should_stop = (new_stagnation_count >= patience) | (i >= iterations_max - 1)
-
-        # Gradient wrt chosen argnums
-        grads = grad(loss_evaluated, argnums=jacnums)(vt, at, ht, ft, vp, hp, fp)
-
-        # Optimizer update
-        updates: Array
-        new_opt_state: Array
-        updates, new_opt_state = solver.update(grads, opt_state)  # ty:ignore[invalid-assignment]
-
-        # Apply updates to the chosen array on selected indices
-        if argnums == 0:
-            new_vt = vt.at[sel].set(vt[sel] + updates[0].at[sel].get())
-            new_at = at + updates[1]
-            vt = lax.cond(is_running, lambda: new_vt, lambda: vt)
-            at = lax.cond(is_running, lambda: new_at, lambda: at)
-        elif argnums == 1:
-            new_ht = ht.at[sel].set(ht[sel] + updates.at[sel].get())
-            ht = lax.cond(is_running, lambda: new_ht, lambda: ht)
-        elif argnums == 2:
-            new_ft = ft.at[sel].set(ft[sel] + updates.at[sel].get())
-            ft = lax.cond(is_running, lambda: new_ft, lambda: ft)
-        elif argnums == 3:
-            new_vp = vp.at[sel].set(vp[sel] + updates.at[sel].get())
-            vp = lax.cond(is_running, lambda: new_vp, lambda: vp)
-        elif argnums == 4:
-            new_hp = hp.at[sel].set(hp[sel] + updates.at[sel].get())
-            hp = lax.cond(is_running, lambda: new_hp, lambda: hp)
-        elif argnums == 5:
-            new_fp = fp.at[sel].set(fp[sel] + updates.at[sel].get())
-            fp = lax.cond(is_running, lambda: new_fp, lambda: fp)
-
-        opt_state = lax.cond(is_running, lambda: new_opt_state, lambda: opt_state)
-        stagnation_count = lax.cond(is_running, lambda: new_stagnation_count, lambda: stagnation_count)
-        should_stop = new_should_stop
-
-        # Geometry updates
-        new_vt_T1, new_at_T1, new_ht_T1, new_ft_T1 = update_T1_func(
-            vt, at, ht, ft, vp, hp, fp, L_in, min_dist_T1, selected_verts, selected_hes, selected_faces
-        )
-        vt = lax.cond(is_running, lambda: new_vt_T1, lambda: vt)
-        at = lax.cond(is_running, lambda: new_at_T1, lambda: at)
-        ht = lax.cond(is_running, lambda: new_ht_T1, lambda: ht)
-        ft = lax.cond(is_running, lambda: new_ft_T1, lambda: ft)
-
-        # Shift prev_L_values
-        new_prev_L_values = prev_L_values.at[1:].set(prev_L_values[:-1])
-        new_prev_L_values = new_prev_L_values.at[0].set(L_current)
-        prev_L_values = lax.cond(is_running, lambda: new_prev_L_values, lambda: prev_L_values)
-
-        L_list = L_list.at[i].set(L_current)
-        step_count = i + 1
-
-        return (
-            vt,
-            at,
-            ht,
-            ft,
-            vp,
-            hp,
-            fp,
-            opt_state,
-            prev_L_values,
-            stagnation_count,
-            step_count,
-            should_stop,
-            L_list,
-        ), None
-
-    init_carry = (
+    return _minimize_bounded(
         vertTable,
         angTable,
         heTable,
@@ -810,20 +686,18 @@ def _minimize_ep_bounded(  # noqa: C901
         vert_params,
         he_params,
         face_params,
-        opt_state,
-        prev_L_values,
-        stagnation_count,
-        step_count,
-        should_stop,
-        L_in_list,
+        loss_evaluated,
+        solver,
+        min_dist_T1,
+        iterations_max,
+        tolerance,
+        patience,
+        selected_verts,
+        selected_hes,
+        selected_faces,
+        argnums,
+        update_T1_func,
     )
-
-    final_state, _ = lax.scan(scan_step, init_carry, xs=jnp.arange(iterations_max))
-
-    # Unpack and return results (for slicing outside JIT)
-    vt_f, at_f, ht_f, ft_f, vp_f, hp_f, fp_f, _, _, _, step_f, _, L_hist = final_state
-
-    return (vt_f, at_f, ht_f, ft_f, vp_f, hp_f, fp_f), (L_hist, step_f)
 
 
 def inner_eq_prop_bounded(
@@ -916,7 +790,7 @@ def outer_eq_prop_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     """Outer optimization for equilibrium propagation."""
-    heTable_before = heTable
+    # heTable_before = heTable
 
     (vertTable_free, angTable_free, heTable_free, faceTable_free), _loss_free = inner_eq_prop_bounded(
         vertTable,
@@ -946,13 +820,13 @@ def outer_eq_prop_bounded(
         update_T1_func=update_T1_func,
     )
 
-    perm_free = _build_t1_repair_perm(
-        vertTable_free,
-        vertTable_target,
-        heTable_before,
-        heTable_free,
-    )
-    vertTable_free, heTable_free = _apply_perm_to_state(perm_free, vertTable_free, heTable_free)
+    # perm_free = _build_t1_repair_perm(
+    #     vertTable_free,
+    #     vertTable_target,
+    #     heTable_before,
+    #     heTable_free,
+    # )
+    # vertTable_free, heTable_free = _apply_perm_to_state(perm_free, vertTable_free, heTable_free)
 
     (vertTable_nudged, angTable_nudged, heTable_nudged, faceTable_nudged), _loss_nudged = inner_eq_prop_bounded(
         vertTable,
@@ -982,13 +856,13 @@ def outer_eq_prop_bounded(
         update_T1_func,
     )
 
-    perm_nudged = _build_t1_repair_perm(
-        vertTable_nudged,
-        vertTable_target,
-        heTable_before,
-        heTable_nudged,
-    )
-    vertTable_nudged, heTable_nudged = _apply_perm_to_state(perm_nudged, vertTable_nudged, heTable_nudged)
+    # perm_nudged = _build_t1_repair_perm(
+    #     vertTable_nudged,
+    #     vertTable_target,
+    #     heTable_before,
+    #     heTable_nudged,
+    # )
+    # vertTable_nudged, heTable_nudged = _apply_perm_to_state(perm_nudged, vertTable_nudged, heTable_nudged)
 
     grad_ep = grad(_loss_ep_static_bounded, argnums=(4, 5, 6))
 
@@ -1108,7 +982,7 @@ def outer_implicit_bounded(
             face_params,
         )
 
-    heTable_before = heTable
+    # heTable_before = heTable
 
     (vertTable_eq, angTable_eq, heTable_eq, faceTable_eq), _L_in_value = inner_opt_bounded(
         vertTable,
@@ -1130,13 +1004,13 @@ def outer_implicit_bounded(
         update_T1_func,
     )
 
-    perm = _build_t1_repair_perm(
-        vertTable_eq,
-        vertTable_target,
-        heTable_before,
-        heTable_eq,
-    )
-    vertTable_eq, heTable_eq = _apply_perm_to_state(perm, vertTable_eq, heTable_eq)
+    # perm = _build_t1_repair_perm(
+    #     vertTable_eq,
+    #     vertTable_target,
+    #     heTable_before,
+    #     heTable_eq,
+    # )
+    # vertTable_eq, heTable_eq = _apply_perm_to_state(perm, vertTable_eq, heTable_eq)
     ################################################################
     ################            Start mod           ################
     ################################################################

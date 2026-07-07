@@ -276,8 +276,6 @@ def _jit_minimize(  # noqa: C901
             grad=grads,  # ty:ignore[unknown-argument]
             value_fn=value_fn,  # ty:ignore[unknown-argument]
         )
-        # Optimizer update
-        # updates, new_opt_state = solver.update(grads, opt_state)
 
         # Apply updates to the chosen array on selected indices
         updates_sel = updates.at[sel].get()
