@@ -299,6 +299,7 @@ def run_n_divisions_parallel(mesh: BoundedMesh, n_waves: int, n_parallel: int,
                              inner_solver: optax.GradientTransformation | None = None,
                              tolerance: float = 1e-6,
                              patience: int = 50,
+                             iters_out: list[int] | None = None,
                              ) -> tuple[BoundedMesh, list[BoundedMesh]]:
     """Simultaneous (parallel) cell divisions: each wave divides `n_parallel`
     distinct cells in a SINGLE cell_division call, then relaxes the tissue ONCE.
@@ -357,6 +358,10 @@ def run_n_divisions_parallel(mesh: BoundedMesh, n_waves: int, n_parallel: int,
             opt1.tolerance           = tolerance
             opt1.patience            = patience
             loss_hist = list(opt1.inner_optimization(mesh_opt))
+            # Actual iterations run by this wave's relaxation (early stopping means
+            # usually < max_opt_iter); collect it if asked, as run_n_divisions does.
+            if iters_out is not None:
+                iters_out.append(len(loss_hist))
             print(f"Optimization: {len(loss_hist)} iter, "
                   f"loss {float(loss_hist[0]):.4f} → {float(loss_hist[-1]):.4f}")
 
