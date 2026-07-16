@@ -97,18 +97,15 @@ class _BilevelOptimizer:
 
     @inner_solver.setter
     def inner_solver(self, new_inner_solver: optax.GradientTransformation) -> None:
-        if self.bilevel_optimization_method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION and (
-            "nonlinear_cg" in str(new_inner_solver)
-            or (
-                isinstance(new_inner_solver, optax.GradientTransformationExtraArgs)
-                and _check_solver_is_LBFGS(new_inner_solver)
-            )
+        if (
+            self.bilevel_optimization_method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION
+            and _is_ad_incompatible_solver(new_inner_solver)
         ):
-            msg = f"[ WARNING ] The conjugate gradient or LBFGS inner solver \
+            msg = f"[ WARNING ] A line-search inner solver (cg_linesearch, sgd_linesearch, LBFGS, ...) \
 is incompatible with the current optimization \
 method ({BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION}). As such the inner solver was not changed. \
 Current inner solver still is {self.inner_solver}. Change the optimization method if you want \
-to use the conjugate gradient or LBFGS inner solver."
+to use a line-search inner solver."
             print(msg, file=sys.stderr)
         else:
             self._inner_solver = new_inner_solver
@@ -120,14 +117,11 @@ to use the conjugate gradient or LBFGS inner solver."
 
     @bilevel_optimization_method.setter
     def bilevel_optimization_method(self, method: BilevelOptimizationMethod) -> None:
-        if method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION and (
-            "nonlinear_cg" in str(self.inner_solver)
-            or (
-                isinstance(self.inner_solver, optax.GradientTransformationExtraArgs)
-                and _check_solver_is_LBFGS(self.inner_solver)
-            )
+        if (
+            method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION
+            and _is_ad_incompatible_solver(self.inner_solver)
         ):
-            msg = f"[ WARNING ] The conjugate gradient or LBFGS inner solver is incompatible with the \
+            msg = f"[ WARNING ] A line-search inner solver is incompatible with the \
 {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} method. As such the method was not changed. \
 Current method still is {self.bilevel_optimization_method}. Change the inner solver if you want \
 to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization method."
@@ -556,10 +550,41 @@ def _apply_perm_to_state(
     return new_vertTable, new_heTable
 
 
-def _check_solver_is_LBFGS(solver: optax.GradientTransformation) -> bool:  # noqa: N802
-    """Dirty hack to identify an optax.LBFGS solver."""
-    result = False
+def _has_zoom_linesearch_state(solver: optax.GradientTransformation) -> bool:
+    """True if `solver`'s state contains a zoom (Wolfe) line-search sub-state.
+
+    Every line-search solver — optax.lbfgs as well as cg_linesearch /
+    sgd_linesearch — chains in ``optax.scale_by_zoom_linesearch``, whose state is a
+    ``ScaleByZoomLinesearchState``. That is the reliable signature: optax.lbfgs has
+    a generic repr with no "linesearch" marker in its name, and its own
+    ``ScaleByLBFGSState`` is buried alongside other sub-states, so we look for the
+    line-search state itself rather than a specific solver class.
+
+    The state is only realised by ``init``, so we build it on a dummy scalar
+    parameter. ``init`` is pure and cheap; any failure (a solver that rejects the
+    probe) simply means "not a line-search solver" for our purposes.
+    """
     try:
-        result = solver.init([])[0].__class__.__name__ == "ScaleByLBFGSState"  # ty:ignore[not-subscriptable]
-    finally:
-        return result  # noqa: B012
+        state = solver.init(jnp.zeros(()))
+    except Exception:
+        return False
+    substates = state if isinstance(state, tuple) else (state,)
+    return any(s.__class__.__name__ == "ScaleByZoomLinesearchState" for s in substates)
+
+
+def _is_ad_incompatible_solver(solver: optax.GradientTransformation) -> bool:
+    """True if `solver` cannot be reverse-mode differentiated through.
+
+    Line-search inner solvers run an inner ``lax.while_loop`` with data-dependent
+    bounds (the Wolfe/zoom search), which reverse-mode AD cannot differentiate
+    through — so they are incompatible with the AUTOMATIC_DIFFERENTIATION bilevel
+    method. Two detection paths, because no single one covers every solver:
+
+    - ``cg_linesearch``, ``sgd_linesearch`` (and future ones) carry a "linesearch"
+      marker in their factory name, so a cheap name check catches them.
+    - ``optax.lbfgs`` has a generic repr with no such marker, so it is identified by
+      the ``ScaleByZoomLinesearchState`` in its optimiser state.
+    """
+    if "linesearch" in str(solver):
+        return True
+    return _has_zoom_linesearch_state(solver)
