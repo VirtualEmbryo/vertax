@@ -35,7 +35,7 @@ OuterLossFunction = Callable[
 ]
 
 UpdateT1FuncBounded = Callable[
-    [Array, Array, Array, Array, Array, Array, Array, InnerLossFunctionBounded, float, Array, Array, Array],
+    [Array, Array, Array, Array, Array, Array, Array, InnerLossFunctionBounded, float, Array, Array, Array, bool],
     tuple[Array, Array, Array, Array],
 ]
 
@@ -67,7 +67,7 @@ LossEPFunction = Callable[
 ###############################
 
 
-@partial(jit, static_argnums=(7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))
+@partial(jit, static_argnums=(7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18))
 def _minimize_bounded(  # noqa: C901
     vertTable: Array,
     angTable: Array,
@@ -87,6 +87,7 @@ def _minimize_bounded(  # noqa: C901
     selected_faces: Array | None = None,
     argnums: int = 0,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    perform_energy_check: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     if selected_verts is None:
         selected_verts = jnp.arange(vertTable.shape[0])
@@ -247,7 +248,19 @@ def _minimize_bounded(  # noqa: C901
 
         # Geometry updates
         new_vt_T1, new_at_T1, new_ht_T1, new_ft_T1 = update_T1_func(
-            vt, at, ht, ft, vp, hp, fp, L_in, min_dist_T1, selected_verts, selected_hes, selected_faces
+            vt,
+            at,
+            ht,
+            ft,
+            vp,
+            hp,
+            fp,
+            L_in,
+            min_dist_T1,
+            selected_verts,
+            selected_hes,
+            selected_faces,
+            perform_energy_check,
         )
         vt = lax.cond(is_running, lambda: new_vt_T1, lambda: vt)
         at = lax.cond(is_running, lambda: new_at_T1, lambda: at)
@@ -320,6 +333,7 @@ def inner_opt_bounded(
     selected_hes: Array | None = None,
     selected_faces: Array | None = None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    perform_energy_check: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array], Array]:
     """Inner optimization for a bounded mesh."""
     # Use the general minimize function with argnums=0 (optimize vertTable)
@@ -342,6 +356,7 @@ def inner_opt_bounded(
         selected_faces=selected_faces,
         argnums=0,
         update_T1_func=update_T1_func,
+        perform_energy_check=perform_energy_check,
     )
 
     # Convert the JAX array step_f to a Python integer
@@ -616,7 +631,7 @@ def _loss_ep_static_bounded(
     return loss_inner_value + (beta * loss_outer_value)
 
 
-@partial(jit, static_argnums=(7, 12, 13, 14, 15, 16, 17, 18, 23, 24, 25))
+@partial(jit, static_argnums=(7, 12, 13, 14, 15, 16, 17, 18, 23, 24, 25, 26))
 def _minimize_ep_bounded(
     vertTable: Array,
     angTable: Array,
@@ -644,6 +659,7 @@ def _minimize_ep_bounded(
     beta: float = 0.001,
     argnums: int = 0,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    perform_energy_check: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     def loss_evaluated(
         vt: Array,
@@ -697,6 +713,7 @@ def _minimize_ep_bounded(
         selected_faces,
         argnums,
         update_T1_func,
+        perform_energy_check=perform_energy_check,
     )
 
 
@@ -726,6 +743,7 @@ def inner_eq_prop_bounded(
     image_target: Array | None,
     beta: float,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    perform_energy_check: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array], Array]:
     """Inner optimization function for equilibrium propagation only and bounded meshes."""
     (vt_f, at_f, ht_f, ft_f, _vp_f, _hp_f, _fp_f), (L_hist_full, step_f_array) = _minimize_ep_bounded(
@@ -755,6 +773,7 @@ def inner_eq_prop_bounded(
         beta,
         argnums=0,
         update_T1_func=update_T1_func,
+        perform_energy_check=perform_energy_check,
     )
 
     step_f = step_f_array.item()

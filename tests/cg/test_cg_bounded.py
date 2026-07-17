@@ -14,9 +14,9 @@ import optax
 from vertax import (
     BoundedBilevelOptimizer,
     BoundedMesh,
+    cg_linesearch,
     cost_ratio,
     energy_line_tensions_bounded,
-    nonlinear_cg,
     plot_mesh,
 )
 from vertax.method_enum import BilevelOptimizationMethod
@@ -32,7 +32,7 @@ def create_optimizer() -> BoundedBilevelOptimizer:
     bop.max_nb_iterations = 1000
     bop.tolerance = 0.00001
     bop.patience = 5
-    bop.inner_solver = nonlinear_cg(restart_every=10)
+    bop.inner_solver = cg_linesearch(restart_every=10)
     bop.inner_solver = optax.sgd(learning_rate=0.01)
     bop.outer_solver = optax.adam(learning_rate=0.0001, nesterov=True)
     bop.bilevel_optimization_method = BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION

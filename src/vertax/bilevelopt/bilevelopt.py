@@ -1,8 +1,8 @@
 """Bi-level optimizers abstract class."""
 
 from __future__ import annotations
-import sys
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
@@ -57,7 +57,9 @@ class _BilevelOptimizer:
         self._update_T1_func: Callable | None = None  # value set by _set_update_T1_func
 
         # These values will be set in the init function of child classes
-        self._inner_opt_func: Callable[[Mesh, Array | None, Array | None, Array | None], list[float]] | None = None
+        self._inner_opt_func: Callable[[Mesh, bool, Array | None, Array | None, Array | None], list[float]] | None = (
+            None
+        )
         self._outer_opt_func: Callable[[Mesh, Array | None, Array | None, Array | None], None] | None = None
 
         self.update_T1 = True  # Force the setting of update T1 func
@@ -158,6 +160,7 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
     def inner_optimization(
         self,
         mesh: Mesh,
+        perform_energy_check: bool = True,
         only_on_vertices: None | list[int] = None,
         only_on_edges: None | list[int] = None,
         only_on_faces: None | list[int] = None,
@@ -166,6 +169,8 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
 
         Args:
             mesh (Mesh): The mesh to act on.
+            perform_energy_check (bool = True): Allow T1 only if the energy is decreased by doing so.
+                                                       Should be true if forward mode is used only.
             only_on_vertices (None | list[int] = None): Consider only a subset of vertices for the loss function.
                                                         All vertices if None.
             only_on_edges (None | list[int] = None): Consider only a subset of edges for the loss function.
@@ -184,7 +189,9 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
             old_edges = mesh.edges.copy()  # Copy previous state to check for permutation later
 
             loss_history = self._inner_opt_func(
-                mesh, *self._selection_to_jax_arrays(only_on_vertices, only_on_edges, only_on_faces)
+                mesh,
+                perform_energy_check,
+                *self._selection_to_jax_arrays(only_on_vertices, only_on_edges, only_on_faces),
             )
 
             # Optional permutation test if T1 happened.
@@ -224,6 +231,7 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
     def bilevel_optimization(
         self,
         mesh: Mesh,
+        perform_energy_check: bool = False,
         only_on_vertices: None | list[int] = None,
         only_on_edges: None | list[int] = None,
         only_on_faces: None | list[int] = None,
@@ -232,6 +240,8 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
 
         Args:
             mesh (Mesh): The mesh to act on.
+            perform_energy_check (bool = True): Allow T1 only if the energy is decreased by doing so.
+                                                       Should be true if forward mode is used only.
             only_on_vertices (None | list[int] = None): Consider only a subset of vertices for the loss function.
                                                         All vertices if None.
             only_on_edges (None | list[int] = None): Consider only a subset of edges for the loss function.
@@ -243,7 +253,8 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
             list[float]: History of loss values during optimization.
         """
         self.outer_optimization(mesh, only_on_vertices, only_on_edges, only_on_faces)
-        return self.inner_optimization(mesh, only_on_vertices, only_on_edges, only_on_faces)
+        # Do not perform energy check in BO
+        return self.inner_optimization(mesh, perform_energy_check, only_on_vertices, only_on_edges, only_on_faces)
 
     def do_n_bilevel_optimization(  # noqa: C901
         self,
@@ -338,14 +349,14 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
                 print(msg)
 
         if pre_inner_optimization:
-            self.inner_optimization(mesh, only_on_vertices, only_on_edges, only_on_faces)
+            self.inner_optimization(mesh, False, only_on_vertices, only_on_edges, only_on_faces)
 
         t_initial = perf_counter()
         for epoch in range(1, nb_epochs + 1):
             epoch_data = [epoch]
             t_begin_of_epoch = perf_counter()
 
-            self.bilevel_optimization(mesh, only_on_vertices, only_on_edges, only_on_faces)
+            self.bilevel_optimization(mesh, False, only_on_vertices, only_on_edges, only_on_faces)
             t_end_of_epoch = perf_counter()
             total_time = t_end_of_epoch - t_initial
             delta_time = t_end_of_epoch - t_begin_of_epoch
