@@ -103,7 +103,7 @@ class _BilevelOptimizer:
             self.bilevel_optimization_method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION
             and _is_ad_incompatible_solver(new_inner_solver)
         ):
-            msg = f"[ WARNING ] A line-search inner solver (cg_linesearch, sgd_linesearch, LBFGS, ...) \
+            msg = f"[ WARNING ] A line-search inner solver (cg_linesearch, gd_linesearch, LBFGS, ...) \
 is incompatible with the current optimization \
 method ({BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION}). As such the inner solver was not changed. \
 Current inner solver still is {self.inner_solver}. Change the optimization method if you want \
@@ -119,9 +119,8 @@ to use a line-search inner solver."
 
     @bilevel_optimization_method.setter
     def bilevel_optimization_method(self, method: BilevelOptimizationMethod) -> None:
-        if (
-            method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION
-            and _is_ad_incompatible_solver(self.inner_solver)
+        if method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION and _is_ad_incompatible_solver(
+            self.inner_solver
         ):
             msg = f"[ WARNING ] A line-search inner solver is incompatible with the \
 {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} method. As such the method was not changed. \
@@ -565,7 +564,7 @@ def _has_zoom_linesearch_state(solver: optax.GradientTransformation) -> bool:
     """True if `solver`'s state contains a zoom (Wolfe) line-search sub-state.
 
     Every line-search solver — optax.lbfgs as well as cg_linesearch /
-    sgd_linesearch — chains in ``optax.scale_by_zoom_linesearch``, whose state is a
+    gd_linesearch — chains in ``optax.scale_by_zoom_linesearch``, whose state is a
     ``ScaleByZoomLinesearchState``. That is the reliable signature: optax.lbfgs has
     a generic repr with no "linesearch" marker in its name, and its own
     ``ScaleByLBFGSState`` is buried alongside other sub-states, so we look for the
@@ -591,7 +590,7 @@ def _is_ad_incompatible_solver(solver: optax.GradientTransformation) -> bool:
     through — so they are incompatible with the AUTOMATIC_DIFFERENTIATION bilevel
     method. Two detection paths, because no single one covers every solver:
 
-    - ``cg_linesearch``, ``sgd_linesearch`` (and future ones) carry a "linesearch"
+    - ``cg_linesearch``, ``gd_linesearch`` (and future ones) carry a "linesearch"
       marker in their factory name, so a cheap name check catches them.
     - ``optax.lbfgs`` has a generic repr with no such marker, so it is identified by
       the ``ScaleByZoomLinesearchState`` in its optimiser state.
