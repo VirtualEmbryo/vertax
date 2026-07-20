@@ -363,7 +363,7 @@ def update_T1_bounded(  # noqa: C901, N802
     scale = (min_dist_T1 + 10 ** (-3)) / 2
 
     # This case may externalize a cell (moves it to be contact with the medium), depending on the energy check
-    # It assumes that out of the 5 edges that define the T1, 2 are curved, but not the one triggering the T1
+    # It assumes that out of the 5 edges that define the T1, 2 are curved, but not the one triggering the T1 
     # Regarding the edge that triggers the T1, here we take its half-edge that points toward the medium
     # ( /             ( /
     #  ←    becomes   ( 
