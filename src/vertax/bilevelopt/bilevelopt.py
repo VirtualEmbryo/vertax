@@ -1,8 +1,8 @@
 """Bi-level optimizers abstract class."""
 
 from __future__ import annotations
-import sys
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
@@ -57,7 +57,9 @@ class _BilevelOptimizer:
         self._update_T1_func: Callable | None = None  # value set by _set_update_T1_func
 
         # These values will be set in the init function of child classes
-        self._inner_opt_func: Callable[[Mesh, Array | None, Array | None, Array | None], list[float]] | None = None
+        self._inner_opt_func: Callable[[Mesh, bool, Array | None, Array | None, Array | None], list[float]] | None = (
+            None
+        )
         self._outer_opt_func: Callable[[Mesh, Array | None, Array | None, Array | None], None] | None = None
 
         self.update_T1 = True  # Force the setting of update T1 func
@@ -97,15 +99,12 @@ class _BilevelOptimizer:
 
     @inner_solver.setter
     def inner_solver(self, new_inner_solver: optax.GradientTransformation) -> None:
-        # Line-search solvers (cg_linesearch, sgd_linesearch, ...) run an inner
-        # lax.while_loop with dynamic bounds, which reverse-mode AD cannot
-        # differentiate through — so they are incompatible with the AD bilevel
-        # method. Detected generically by the "linesearch" marker in their name.
         if (
-            "linesearch" in str(new_inner_solver)
-            and self.bilevel_optimization_method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION
+            self.bilevel_optimization_method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION
+            and _is_ad_incompatible_solver(new_inner_solver)
         ):
-            msg = f"[ WARNING ] A line-search inner solver is incompatible with the current optimization \
+            msg = f"[ WARNING ] A line-search inner solver (cg_linesearch, gd_linesearch, LBFGS, ...) \
+is incompatible with the current optimization \
 method ({BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION}). As such the inner solver was not changed. \
 Current inner solver still is {self.inner_solver}. Change the optimization method if you want \
 to use a line-search inner solver."
@@ -120,7 +119,9 @@ to use a line-search inner solver."
 
     @bilevel_optimization_method.setter
     def bilevel_optimization_method(self, method: BilevelOptimizationMethod) -> None:
-        if "linesearch" in str(self.inner_solver) and method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
+        if method == BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION and _is_ad_incompatible_solver(
+            self.inner_solver
+        ):
             msg = f"[ WARNING ] A line-search inner solver is incompatible with the \
 {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} method. As such the method was not changed. \
 Current method still is {self.bilevel_optimization_method}. Change the inner solver if you want \
@@ -158,6 +159,7 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
     def inner_optimization(
         self,
         mesh: Mesh,
+        perform_energy_check: bool = True,
         only_on_vertices: None | list[int] = None,
         only_on_edges: None | list[int] = None,
         only_on_faces: None | list[int] = None,
@@ -166,6 +168,8 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
 
         Args:
             mesh (Mesh): The mesh to act on.
+            perform_energy_check (bool = True): Allow T1 only if the energy is decreased by doing so.
+                                                       Should be true if forward mode is used only.
             only_on_vertices (None | list[int] = None): Consider only a subset of vertices for the loss function.
                                                         All vertices if None.
             only_on_edges (None | list[int] = None): Consider only a subset of edges for the loss function.
@@ -184,7 +188,9 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
             old_edges = mesh.edges.copy()  # Copy previous state to check for permutation later
 
             loss_history = self._inner_opt_func(
-                mesh, *self._selection_to_jax_arrays(only_on_vertices, only_on_edges, only_on_faces)
+                mesh,
+                perform_energy_check,
+                *self._selection_to_jax_arrays(only_on_vertices, only_on_edges, only_on_faces),
             )
 
             # Optional permutation test if T1 happened.
@@ -224,6 +230,7 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
     def bilevel_optimization(
         self,
         mesh: Mesh,
+        perform_energy_check: bool = False,
         only_on_vertices: None | list[int] = None,
         only_on_edges: None | list[int] = None,
         only_on_faces: None | list[int] = None,
@@ -232,6 +239,8 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
 
         Args:
             mesh (Mesh): The mesh to act on.
+            perform_energy_check (bool = True): Allow T1 only if the energy is decreased by doing so.
+                                                       Should be true if forward mode is used only.
             only_on_vertices (None | list[int] = None): Consider only a subset of vertices for the loss function.
                                                         All vertices if None.
             only_on_edges (None | list[int] = None): Consider only a subset of edges for the loss function.
@@ -243,7 +252,8 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
             list[float]: History of loss values during optimization.
         """
         self.outer_optimization(mesh, only_on_vertices, only_on_edges, only_on_faces)
-        return self.inner_optimization(mesh, only_on_vertices, only_on_edges, only_on_faces)
+        # Do not perform energy check in BO
+        return self.inner_optimization(mesh, perform_energy_check, only_on_vertices, only_on_edges, only_on_faces)
 
     def do_n_bilevel_optimization(  # noqa: C901
         self,
@@ -338,14 +348,14 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
                 print(msg)
 
         if pre_inner_optimization:
-            self.inner_optimization(mesh, only_on_vertices, only_on_edges, only_on_faces)
+            self.inner_optimization(mesh, False, only_on_vertices, only_on_edges, only_on_faces)
 
         t_initial = perf_counter()
         for epoch in range(1, nb_epochs + 1):
             epoch_data = [epoch]
             t_begin_of_epoch = perf_counter()
 
-            self.bilevel_optimization(mesh, only_on_vertices, only_on_edges, only_on_faces)
+            self.bilevel_optimization(mesh, False, only_on_vertices, only_on_edges, only_on_faces)
             t_end_of_epoch = perf_counter()
             total_time = t_end_of_epoch - t_initial
             delta_time = t_end_of_epoch - t_begin_of_epoch
@@ -548,3 +558,43 @@ def _apply_perm_to_state(
     tgt = perm[heTable[:, 4].astype(jnp.int32)].astype(heTable.dtype)
     new_heTable = heTable.at[:, 3].set(src).at[:, 4].set(tgt)
     return new_vertTable, new_heTable
+
+
+def _has_zoom_linesearch_state(solver: optax.GradientTransformation) -> bool:
+    """True if `solver`'s state contains a zoom (Wolfe) line-search sub-state.
+
+    Every line-search solver — optax.lbfgs as well as cg_linesearch /
+    gd_linesearch — chains in ``optax.scale_by_zoom_linesearch``, whose state is a
+    ``ScaleByZoomLinesearchState``. That is the reliable signature: optax.lbfgs has
+    a generic repr with no "linesearch" marker in its name, and its own
+    ``ScaleByLBFGSState`` is buried alongside other sub-states, so we look for the
+    line-search state itself rather than a specific solver class.
+
+    The state is only realised by ``init``, so we build it on a dummy scalar
+    parameter. ``init`` is pure and cheap; any failure (a solver that rejects the
+    probe) simply means "not a line-search solver" for our purposes.
+    """
+    try:
+        state = solver.init(jnp.zeros(()))
+    except Exception:
+        return False
+    substates = state if isinstance(state, tuple) else (state,)
+    return any(s.__class__.__name__ == "ScaleByZoomLinesearchState" for s in substates)
+
+
+def _is_ad_incompatible_solver(solver: optax.GradientTransformation) -> bool:
+    """True if `solver` cannot be reverse-mode differentiated through.
+
+    Line-search inner solvers run an inner ``lax.while_loop`` with data-dependent
+    bounds (the Wolfe/zoom search), which reverse-mode AD cannot differentiate
+    through — so they are incompatible with the AUTOMATIC_DIFFERENTIATION bilevel
+    method. Two detection paths, because no single one covers every solver:
+
+    - ``cg_linesearch``, ``gd_linesearch`` (and future ones) carry a "linesearch"
+      marker in their factory name, so a cheap name check catches them.
+    - ``optax.lbfgs`` has a generic repr with no such marker, so it is identified by
+      the ``ScaleByZoomLinesearchState`` in its optimiser state.
+    """
+    if "linesearch" in str(solver):
+        return True
+    return _has_zoom_linesearch_state(solver)

@@ -194,7 +194,7 @@ def run_n_divisions(mesh: BoundedMesh, n_divisions: int,
 
     inner_solver : optax solver used for the mechanical relaxation after each
         division. None (default) reproduces the notebook's SGD(lr=1e-3); pass any
-        optax.GradientTransformation (e.g. optax.adam, cg_linesearch, sgd_linesearch, optax.lbfgs)
+        optax.GradientTransformation (e.g. optax.adam, cg_linesearch, gd_linesearch, optax.lbfgs)
         to benchmark alternative solvers.
 
     tolerance, patience : early-stopping criterion for each inner relaxation. The

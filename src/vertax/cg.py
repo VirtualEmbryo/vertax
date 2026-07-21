@@ -99,14 +99,14 @@ def cg_linesearch(
         )
 
     def update_fn(
-        updates: optax.Updates,  # = grad, by optax convention
+        updates: optax.Updates,  # = grad, by optax convention  # noqa: ARG001
         state: NonlinearCGState,
         params: optax.Params | None = None,
         *,
         value: jax.Array | None = None,
         grad: optax.Updates | None = None,
-        value_fn=None,
-        **extra_args: Any,
+        value_fn=None,  # noqa: ANN001
+        **extra_args: Any,  # noqa: ANN401, ARG001
     ) -> tuple[optax.Updates, NonlinearCGState]:
         if params is None or value is None or grad is None or value_fn is None:
             msg = (
@@ -159,13 +159,13 @@ def cg_linesearch(
     return optax.GradientTransformationExtraArgs(init_fn, update_fn)  # ty:ignore[invalid-argument-type]
 
 
-class SGDLineSearchState(NamedTuple):
-    """State carried by the SGD + line-search solver between ``update`` calls."""
+class GDLineSearchState(NamedTuple):
+    """State carried by the GD + line-search solver between ``update`` calls."""
 
     ls_state: Any  # zoom line-search inner state
 
 
-def sgd_linesearch(
+def gd_linesearch(
     max_linesearch_steps: int = 20,
 ) -> optax.GradientTransformationExtraArgs:
     """Steepest descent with a zoom (Wolfe) line search for the step size.
@@ -189,22 +189,22 @@ def sgd_linesearch(
     """
     linesearch = optax.scale_by_zoom_linesearch(max_linesearch_steps=max_linesearch_steps)
 
-    def init_fn(params: optax.Params) -> SGDLineSearchState:
-        return SGDLineSearchState(ls_state=linesearch.init(params))
+    def init_fn(params: optax.Params) -> GDLineSearchState:
+        return GDLineSearchState(ls_state=linesearch.init(params))
 
     def update_fn(
-        updates: optax.Updates,  # = grad, by optax convention
-        state: SGDLineSearchState,
+        updates: optax.Updates,  # = grad, by optax convention  # noqa: ARG001
+        state: GDLineSearchState,
         params: optax.Params | None = None,
         *,
         value: jax.Array | None = None,
         grad: optax.Updates | None = None,
-        value_fn=None,
-        **extra_args: Any,
-    ) -> tuple[optax.Updates, SGDLineSearchState]:
+        value_fn=None,  # noqa: ANN001
+        **extra_args: Any,  # noqa: ANN401, ARG001
+    ) -> tuple[optax.Updates, GDLineSearchState]:
         if params is None or value is None or grad is None or value_fn is None:
             msg = (
-                "sgd_linesearch.update requires `params`, `value`, `grad` and "
+                "gd_linesearch.update requires `params`, `value`, `grad` and "
                 "`value_fn` (it performs a line search). Pass them from the loop."
             )
             raise ValueError(msg)
@@ -221,6 +221,6 @@ def sgd_linesearch(
             grad=grad,
             value_fn=value_fn,
         )
-        return step_updates, SGDLineSearchState(ls_state=ls_state)
+        return step_updates, GDLineSearchState(ls_state=ls_state)
 
     return optax.GradientTransformationExtraArgs(init_fn, update_fn)  # ty:ignore[invalid-argument-type]

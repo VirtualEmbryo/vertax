@@ -85,6 +85,7 @@ UpdateT1Func = Callable[
         Array,
         Array,
         Array,
+        bool,
     ],
     tuple[Array, Array, Array],
 ]
@@ -95,7 +96,7 @@ UpdateT1Func = Callable[
 ###############################
 
 
-@partial(jit, static_argnums=(9, 10, 11, 12, 13, 14, 15, 16, 17, 18))
+@partial(jit, static_argnums=(9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19))
 def _jit_minimize(  # noqa: C901
     vertTable: Array,
     heTable: Array,
@@ -116,6 +117,7 @@ def _jit_minimize(  # noqa: C901
     patience: int = 5,
     optimization_target: OptimizationTarget = OptimizationTarget.VERTICES,
     update_t1_func: UpdateT1Func = update_T1,
+    perform_energy_check: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     x0: Array = [vertTable, heTable, faceTable, vert_params, he_params, face_params][optimization_target.value]
     sel: Array = [
@@ -189,7 +191,7 @@ def _jit_minimize(  # noqa: C901
 
         # value_fn re-evaluates L_in as a function of the solver's params only
         # (everything else held fixed at the current step). Line-search solvers
-        # (cg_linesearch, sgd_linesearch, lbfgs) need it; adam/sgd ignore the extra arguments.
+        # (cg_linesearch, gd_linesearch, lbfgs) need it; adam/sgd ignore the extra arguments.
         if argnums == 0:
             params_cur = vt
 
@@ -276,8 +278,6 @@ def _jit_minimize(  # noqa: C901
             grad=grads,  # ty:ignore[unknown-argument]
             value_fn=value_fn,  # ty:ignore[unknown-argument]
         )
-        # Optimizer update
-        # updates, new_opt_state = solver.update(grads, opt_state)
 
         # Apply updates to the chosen array on selected indices
         updates_sel = updates.at[sel].get()
@@ -303,7 +303,20 @@ def _jit_minimize(  # noqa: C901
         ft = lax.cond(is_running, lambda: new_ft_pbc, lambda: ft)
 
         new_vt_T1, new_ht_T1, new_ft_T1 = update_t1_func(
-            vt, ht, ft, width, height, vp, hp, fp, L_in, min_dist_T1, selected_verts, selected_hes, selected_faces
+            vt,
+            ht,
+            ft,
+            width,
+            height,
+            vp,
+            hp,
+            fp,
+            L_in,
+            min_dist_T1,
+            selected_verts,
+            selected_hes,
+            selected_faces,
+            perform_energy_check,
         )
         vt = lax.cond(is_running, lambda: new_vt_T1, lambda: vt)
         ht = lax.cond(is_running, lambda: new_ht_T1, lambda: ht)
@@ -377,6 +390,7 @@ def minimize(
     selected_faces: Array | None = None,
     optimization_target: OptimizationTarget = OptimizationTarget.VERTICES,
     update_t1_func: UpdateT1Func = update_T1,
+    perform_energy_check: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     """General minimization function."""
     # ensure width and height are hashable...
@@ -415,6 +429,7 @@ def minimize(
             patience=patience,
             optimization_target=optimization_target,
             update_t1_func=update_t1_func,
+            perform_energy_check=perform_energy_check,
         )
     )
 
@@ -438,6 +453,7 @@ def inner_opt(
     selected_hes: Array | None = None,
     selected_faces: Array | None = None,
     update_t1_func: UpdateT1Func = update_T1,
+    perform_energy_check: bool = False,
 ) -> tuple[tuple[Array, Array, Array], Array]:
     """Inner optimization function."""
     # Use the general minimize function with VERTICES (optimize vertTable)
@@ -461,6 +477,7 @@ def inner_opt(
         selected_faces=selected_faces,
         optimization_target=OptimizationTarget.VERTICES,
         update_t1_func=update_t1_func,
+        perform_energy_check=perform_energy_check,
     )
 
     # Convert the JAX array step_f to a Python integer
@@ -646,7 +663,7 @@ def _loss_ep_static(
     return loss_inner + (beta * loss_outer)
 
 
-@partial(jit, static_argnums=(6, 10, 11, 17, 18, 19, 20, 21, 22, 23, 24))
+@partial(jit, static_argnums=(6, 10, 11, 17, 18, 19, 20, 21, 22, 23, 24, 25))
 def _minimize_ep(
     vertTable: Array,
     heTable: Array,
@@ -673,6 +690,7 @@ def _minimize_ep(
     width: float = 1,
     height: float = 1,
     update_t1_func: UpdateT1Func = update_T1,  # 22, 23, 24 : [STATIC]
+    perform_energy_check: bool = False,  # 25 static
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     # 1. Helper: Bind the fixed arguments to the loss function.
     def loss_evaluated(vt: Array, ht: Array, ft: Array, vp: Array, hp: Array, fp: Array) -> Array:
@@ -732,6 +750,7 @@ def _minimize_ep(
         patience=patience,
         optimization_target=OptimizationTarget.VERTICES,
         update_t1_func=update_t1_func,
+        perform_energy_check=perform_energy_check,
     )
 
 
@@ -761,6 +780,7 @@ def inner_eq_prop(
     tolerance: float = 1e-3,
     patience: int = 5,
     update_t1_func: UpdateT1Func = update_T1,
+    perform_energy_check: bool = False,
 ) -> tuple[tuple[Array, Array, Array], Array]:
     """Wrapper to call the JIT-compiled minimize function and handle post-processing (slicing history)."""
     # Call the JIT-compiled minimize function (defined in previous step)
@@ -792,6 +812,7 @@ def inner_eq_prop(
         width,
         height,
         update_t1_func,
+        perform_energy_check=perform_energy_check,
     )
 
     # Convert the JAX array step_f to a Python integer for slicing

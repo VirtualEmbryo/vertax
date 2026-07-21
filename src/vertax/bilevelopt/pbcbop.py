@@ -102,6 +102,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
     def _inner_opt(
         self,
         mesh: Mesh,
+        perform_energy_check: bool = True,
         only_on_vertices: None | Array = None,
         only_on_edges: None | Array = None,
         only_on_faces: None | Array = None,
@@ -136,6 +137,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                 selected_hes=only_on_edges,
                 selected_faces=only_on_faces,
                 update_t1_func=self._update_T1_func,
+                perform_energy_check=perform_energy_check,
             )
         return list(loss_history)
 
