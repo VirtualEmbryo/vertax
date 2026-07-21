@@ -363,12 +363,12 @@ def update_T1_bounded(  # noqa: C901, N802
     scale = (min_dist_T1 + 10 ** (-3)) / 2
 
     # This case may externalize a cell (moves it to be contact with the medium), depending on the energy check
-    # It assumes that out of the 5 edges that define the T1, 2 are curved, but not the one triggering the T1 
+    # It assumes that out of the 5 edges that define the T1, 2 are curved, but not the one triggering the T1
     # Regarding the edge that triggers the T1, here we take its half-edge that points toward the medium
     # ( /             ( /
-    #  ←    becomes   ( 
+    #  ←    becomes   (
     # ( \             ( \
-    def true_fun4(
+    def externalizing_t1_case2_fun(
         stacked_data: tuple[
             Array,
             Array,
@@ -515,8 +515,8 @@ def update_T1_bounded(  # noqa: C901, N802
         faceTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), faceTable_A, faceTable_)
         return vertTable_, angTable_, heTable_, faceTable_
 
-    #This case may produce a T1 that is never in contact with the medium (no edge is curved), depending on the energy check
-    def false_fun4(
+    # This case may produce a T1 never in contact with the medium (no edge is curved), depending on the energy check
+    def standard_t1_fun(
         stacked_data: tuple[
             Array,
             Array,
@@ -660,13 +660,13 @@ def update_T1_bounded(  # noqa: C901, N802
         faceTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), faceTable_A, faceTable_)
         return vertTable_, angTable_, heTable_, faceTable_
 
-    #This case may externalize a cell (moves it to be contact with the medium), depending on the energy check
-    #It assumes that out of the 5 edges that define the T1, 2 are curved, but not the one triggering the T1
-    #Regarding the edge that triggers the T1, here we take its half-edge that points away from the medium
+    # This case may externalize a cell (moves it to be contact with the medium), depending on the energy check
+    # It assumes that out of the 5 edges that define the T1, 2 are curved, but not the one triggering the T1
+    # Regarding the edge that triggers the T1, here we take its half-edge that points away from the medium
     # ( /             ( /
-    #  →    becomes   ( 
+    #  →    becomes   (
     # ( \             ( \
-    def true_fun3(
+    def externalizing_t1_case1_fun(
         stacked_data: tuple[
             Array,
             Array,
@@ -810,7 +810,7 @@ def update_T1_bounded(  # noqa: C901, N802
         faceTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), faceTable_A, faceTable_)
         return vertTable_, angTable_, heTable_, faceTable_
 
-    def false_fun3(
+    def other_t1_case_fun(
         stacked_data: tuple[
             Array,
             Array,
@@ -840,17 +840,18 @@ def update_T1_bounded(  # noqa: C901, N802
         """Source vertex is inside, and previous edge's source vertex is inside too."""
         _, _, _, _, _, _, _, _, _, _, _, _, _, he_next, _, _, _, _, _, _, heTable_, _, _ = stacked_data
         # Is the next edge's source vertex (the target vertex ?) also outside ?
-        # if neither the triggering, the previous nor the next are curved, then the only possible situation is that all edges
+        # if neither the triggering, the previous nor the next are curved,
+        # then the only possible situation is that all edges
         # are non-curved, and in that case we will do a standard T1
         externalize2 = heTable_.at[he_next, 3].get() == 0
-        return jax.lax.cond(externalize2, true_fun4, false_fun4, stacked_data)
+        return jax.lax.cond(externalize2, externalizing_t1_case2_fun, standard_t1_fun, stacked_data)
 
-    #This case may internalize a cell (eliminates at least one of its contacts with the medium), depending on the energy check
-    #It assumes that out of the 5 edges that define the T1, 3 are curved, including the one triggering the T1
+    # This case may internalize a cell (eliminates at least one of its contacts with the medium)
+    # It assumes that out of the 5 edges that define the T1, 3 are curved, including the one triggering the T1
     # ( /             ( /
     # (     becomes    -
     # ( \             ( \
-    def true_fun2(
+    def internalizing_t1_fun(
         stacked_data: tuple[
             Array,
             Array,
@@ -877,7 +878,7 @@ def update_T1_bounded(  # noqa: C901, N802
             bool,
         ],
     ) -> tuple[Array, Array, Array, Array]:
-        """Source vertex is outside."""
+        """Source vertex is outside. Current edge is curved and will be internalized during the T1."""
         (
             idx,
             idx_twin,
@@ -939,7 +940,7 @@ def update_T1_bounded(  # noqa: C901, N802
         he_prev_twin_prev = heTable_.at[he_prev_twin, 0].get()
         he_next_twin_face = heTable_.at[he_next_twin, 7].get()
         he_prev_twin_face = heTable_.at[he_prev_twin, 7].get()
-        
+
         # update the half-edges that are not responsible for the T1 but still feel its effects
         heTable_ = heTable_.at[he_prev, 1].set(he_next)
         heTable_ = heTable_.at[he_prev_twin, 0].set(idx_twin)
@@ -996,7 +997,7 @@ def update_T1_bounded(  # noqa: C901, N802
         faceTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), faceTable_A, faceTable_)
         return vertTable_, angTable_, heTable_, faceTable_
 
-    def false_fun2(
+    def not_curved_t1_fun(
         stacked_data: tuple[
             Array,
             Array,
@@ -1023,18 +1024,18 @@ def update_T1_bounded(  # noqa: C901, N802
             bool,
         ],
     ) -> tuple[Array, Array, Array, Array]:
-        """The source vertex is inside."""
+        """Current edge is inside."""
         _, _, _, _, _, _, _, _, _, _, _, _, he_prev, _, _, _, _, _, _, _, heTable_, _, _ = stacked_data
         """But the previous edge's source vertex is outside ?"""
         # if the half-edge previous to the one triggering the T1 is curved, we will do one of the externalizations
         # if instead the next half-edge is curved, we will do the other externalization
         # this is just for simplicity, because some values will exist in one case but not in the other
-        # for example, if the previous is curved, then obviously its twin is dummy and we cannot get information from it,
+        # for example, if the previous is curved, then its twin is dummy and we cannot get information from it,
         # which is not the case when the next is curved
         externalize1 = heTable_.at[he_prev, 3].get() == 0
-        return jax.lax.cond(externalize1, true_fun3, false_fun3, stacked_data)
+        return jax.lax.cond(externalize1, externalizing_t1_case1_fun, other_t1_case_fun, stacked_data)
 
-    def true_fun1(
+    def cant_t1_move_vertices_away_fun(
         stacked_data: tuple[
             Array,
             Array,
@@ -1101,7 +1102,7 @@ def update_T1_bounded(  # noqa: C901, N802
 
         return vertTable_, angTable_, heTable_, faceTable_
 
-    def false_fun1(
+    def find_t1_case_fun(
         stacked_data: tuple[
             Array,
             Array,
@@ -1179,8 +1180,8 @@ def update_T1_bounded(  # noqa: C901, N802
         internalize = heTable_.at[idx, 3].get() == 0
         return jax.lax.cond(
             internalize,
-            true_fun2,
-            false_fun2,
+            internalizing_t1_fun,
+            not_curved_t1_fun,
             (
                 idx,
                 idx_twin,
@@ -1208,7 +1209,7 @@ def update_T1_bounded(  # noqa: C901, N802
             ),
         )
 
-    def true_fun0(
+    def below_t1_threshold_fun(
         stacked_data: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, bool],
     ) -> tuple[Array, Array, Array, Array]:
         """For the current edge, the distance between the source and target vertex is less than min_dist_T1.
@@ -1249,8 +1250,8 @@ def update_T1_bounded(  # noqa: C901, N802
         emergency = jnp.logical_or(emergency, jnp.sum(heTable_[:, 5] != 0) == 2)
         return jax.lax.cond(
             emergency,
-            true_fun1,
-            false_fun1,
+            cant_t1_move_vertices_away_fun,
+            find_t1_case_fun,
             (
                 x1,
                 y1,
@@ -1278,7 +1279,7 @@ def update_T1_bounded(  # noqa: C901, N802
             ),
         )
 
-    def false_fun0(
+    def nothing_to_do_fun(
         stacked_data: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, bool],
     ) -> tuple[Array, Array, Array, Array]:
         """For the current edge, the distance between the source and target vertex is greater than min_dist_T1.
@@ -1288,10 +1289,11 @@ def update_T1_bounded(  # noqa: C901, N802
         _, _, _, _, _, _, _, vertTable_, angTable_, heTable_, faceTable_, _perform_energy_check = stacked_data
         return vertTable_, angTable_, heTable_, faceTable_
 
-    #loop over all edges, making sure to take only the non-dummy half-edges
+    # loop over all edges, making sure to take only the non-dummy half-edges
     def body_fun(i: int, stacked_data: tuple[Array, Array, Array, Array]) -> tuple[Array, Array, Array, Array, Array]:
         vertTable_, angTable_, heTable_, faceTable_ = stacked_data
-        # select only non-dummy half-edges, one per edge (if non of the 2 hes are dummy select arbitrarily the first one)
+        # select only non-dummy half-edges, one per edge
+        # (if non of the 2 hes are dummy select arbitrarily the first one)
         # dummy half-edges are all zero except for the twin field
         selector = (heTable_.at[2 * i, 3].get() + heTable_.at[2 * i, 5].get()) == 0
         idx = 2 * i + selector.astype("int32")
@@ -1305,8 +1307,8 @@ def update_T1_bounded(  # noqa: C901, N802
         T1_trigger = dist < min_dist_T1
         return jax.lax.cond(
             T1_trigger,
-            true_fun0,
-            false_fun0,
+            below_t1_threshold_fun,
+            nothing_to_do_fun,
             (
                 # source position
                 x0,
