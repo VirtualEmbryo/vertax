@@ -1,6 +1,5 @@
 """Optimization methods for VertAX (bounded version)."""
 
-import os
 from collections.abc import Callable
 from functools import partial
 
@@ -13,15 +12,6 @@ from scipy.sparse.linalg import LinearOperator, minres
 
 from vertax.method_enum import BilevelOptimizationMethod
 from vertax.topo import update_T1_bounded
-
-# Per-step cap on how far a single vertex may move during inner relaxation. The
-# incremental T1 transition detector assumes vertices move by small amounts each
-# iteration (comparable to min_dist_T1); line-search solvers (cg_linesearch, gd_linesearch, lbfgs)
-# can otherwise take steps of order 1, letting a vertex jump across whole cells in
-# one iteration and producing tangled arcs / spurious-looking cells. Rescaling each
-# vertex displacement to at most this magnitude keeps every solver on a T1-safe scale
-# without changing the descent direction.
-MAX_VERTEX_STEP = float(os.environ.get("VERTAX_MAX_VERTEX_STEP", "0.05"))
 
 InnerLossFunctionBounded = Callable[
     [Array, Array, Array, Array, Array | None, Array | None, Array | None, Array, Array, Array], Array
@@ -183,7 +173,7 @@ def _minimize_bounded(  # noqa: C901
 
         # value_fn re-evaluates L_in as a function of the solver's params only
         # (everything else held fixed at the current step). Line-search solvers
-        # (cg_linesearch, gd_linesearch, lbfgs) need it; adam/sgd ignore the extra arguments.
+        # (cg_linesearch, sgd_linesearch, lbfgs) need it; adam/sgd ignore the extra arguments.
         if argnums == 0:
             params_cur = (vt, at)
 
@@ -232,13 +222,7 @@ def _minimize_bounded(  # noqa: C901
 
         # Apply updates to the chosen array on selected indices
         if argnums == 0:
-            # Cap the per-step vertex move so large line-search steps (cg_linesearch,
-            # gd_linesearch) stay on the scale the incremental T1 detector expects.
-            # Each vertex displacement is rescaled to at most MAX_VERTEX_STEP; angles ride along.
-            vstep = updates[0].at[sel].get()
-            vnorm = jnp.linalg.norm(vstep, axis=1, keepdims=True)
-            vscale = jnp.minimum(1.0, MAX_VERTEX_STEP / jnp.maximum(vnorm, 1e-12))
-            new_vt = vt.at[sel].set(vt[sel] + vstep * vscale)
+            new_vt = vt.at[sel].set(vt[sel] + updates[0].at[sel].get())
             new_at = at + updates[1]
             vt = lax.cond(is_running, lambda: new_vt, lambda: vt)
             at = lax.cond(is_running, lambda: new_at, lambda: at)
@@ -381,99 +365,6 @@ def inner_opt_bounded(
     final_L_list = L_hist_full[:step_f]
     # Return updated arrays and loss history
     return (vt_f, at_f, ht_f, ft_f), final_L_list
-
-
-def inner_opt_bounded_snapshots(
-    vertTable: Array,
-    angTable: Array,
-    heTable: Array,
-    faceTable: Array,
-    vert_params: Array,
-    he_params: Array,
-    face_params: Array,
-    L_in: InnerLossFunctionBounded,
-    solver: optax.GradientTransformation,
-    min_dist_T1: float,
-    iterations_max: int = 1000,
-    tolerance: float = 1e-4,
-    patience: int = 5,
-    selected_verts: Array | None = None,
-    selected_hes: Array | None = None,
-    selected_faces: Array | None = None,
-    update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
-) -> tuple[list[tuple[Array, Array, Array, Array]], list[float]]:
-    """Inner relaxation that records the (vertices, angles, edges, faces) tables at
-    EVERY iteration, for animation. Same per-step math as inner_opt_bounded
-    (argnums=0: optimise vertices+angles, T1 transitions enabled, same early stop),
-    but driven by a Python loop so the full trajectory of ANY solver — including
-    line-search solvers (CG, L-BFGS) — is captured faithfully: the optimiser state
-    persists across steps (no per-chunk reset), so the recorded path is the true
-    continuous relaxation.
-
-    Returns (snapshots, losses): snapshots is a list of (vt, at, ht, ft) per
-    iteration (including the initial state at index 0); losses the matching
-    energies. Sub-sample the lists to pick animation frames.
-
-    This is a stand-alone animation helper — the production loops (inner_opt_bounded,
-    the AD path, PBC) are untouched.
-    """
-    if selected_verts is None:
-        selected_verts = jnp.arange(vertTable.shape[0])
-    if selected_hes is None:
-        selected_hes = jnp.arange(heTable.shape[0])
-    if selected_faces is None:
-        selected_faces = jnp.arange(faceTable.shape[0])
-    sel = selected_verts
-
-    opt_state = solver.init((vertTable, angTable))
-
-    @jit
-    def _step(vt, at, ht, ft, opt_state):
-        L_current = L_in(vt, at, ht, ft, selected_verts, selected_hes, selected_faces,
-                         vert_params, he_params, face_params)
-        grads = grad(L_in, argnums=[0, 1])(
-            vt, at, ht, ft, selected_verts, selected_hes, selected_faces,
-            vert_params, he_params, face_params)
-
-        def value_fn(p: tuple[Array, Array]) -> Array:
-            vt_p, at_p = p
-            return L_in(vt_p, at_p, ht, ft, selected_verts, selected_hes, selected_faces,
-                        vert_params, he_params, face_params)
-
-        updates, new_opt_state = solver.update(
-            grads, opt_state, (vt, at),
-            value=L_current, grad=grads, value_fn=value_fn,
-        )
-        new_vt = vt.at[sel].set(vt[sel] + updates[0].at[sel].get())
-        new_at = at + updates[1]
-        new_vt, new_at, new_ht, new_ft = update_T1_func(
-            new_vt, new_at, ht, ft, vert_params, he_params, face_params,
-            L_in, min_dist_T1, selected_verts, selected_hes, selected_faces)
-        return new_vt, new_at, new_ht, new_ft, new_opt_state, L_current
-
-    vt, at, ht, ft = vertTable, angTable, heTable, faceTable
-    snapshots: list[tuple[Array, Array, Array, Array]] = [(vt, at, ht, ft)]
-    losses: list[float] = []
-
-    prev_L = None
-    stagnation = 0
-    for _ in range(int(iterations_max)):
-        vt, at, ht, ft, opt_state, L_current = _step(vt, at, ht, ft, opt_state)
-        Lc = float(L_current)
-        losses.append(Lc)
-        snapshots.append((vt, at, ht, ft))
-        # Early stopping mirrors the production loop (relative-change + patience).
-        if prev_L is not None:
-            denom = prev_L if prev_L != 0 else 1.0
-            if abs((Lc - prev_L) / denom) < tolerance:
-                stagnation += 1
-            else:
-                stagnation = 0
-            if stagnation >= int(patience):
-                break
-        prev_L = Lc
-
-    return snapshots, losses
 
 
 def _sq_dist(p: Array, q: Array) -> Array:

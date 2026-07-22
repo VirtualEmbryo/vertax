@@ -191,7 +191,7 @@ def _jit_minimize(  # noqa: C901
 
         # value_fn re-evaluates L_in as a function of the solver's params only
         # (everything else held fixed at the current step). Line-search solvers
-        # (cg_linesearch, gd_linesearch, lbfgs) need it; adam/sgd ignore the extra arguments.
+        # (cg_linesearch, sgd_linesearch, lbfgs) need it; adam/sgd ignore the extra arguments.
         if argnums == 0:
             params_cur = vt
 
