@@ -87,7 +87,7 @@ LossEPFunction = Callable[
 ###############################
 
 
-@partial(jit, static_argnums=(7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18))
+@partial(jit, static_argnums=(7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19))
 def _minimize_bounded(  # noqa: C901
     vertTable: Array,
     angTable: Array,
@@ -108,6 +108,7 @@ def _minimize_bounded(  # noqa: C901
     argnums: int = 0,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     perform_energy_check: bool = False,
+    cap_vertex_step: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     if selected_verts is None:
         selected_verts = jnp.arange(vertTable.shape[0])
@@ -245,14 +246,34 @@ def _minimize_bounded(  # noqa: C901
             # Cap the per-step vertex move so large line-search steps (cg_linesearch,
             # gd_linesearch) stay on the scale the incremental T1 detector expects.
             # The cap is relative to min_dist_T1, so it follows the mesh's own scale.
-            # Only the magnitude is clipped; the direction is untouched, so this
-            # shortens steps without changing the descent direction. Angles ride
-            # along unscaled.
-            max_step = MAX_VERTEX_STEP_FACTOR * min_dist_T1
+            # Angles ride along unscaled.
+            #
+            # This clips PER VERTEX: each vertex keeps its own direction, but a vertex
+            # already under the cap is left alone while a faster one is pulled back to
+            # exactly max_step. Relative magnitudes between vertices are therefore not
+            # preserved -- steps of 0.03 and 3.0 both come out at the cap -- so the
+            # descent direction of the mesh as a whole IS altered. This is a local
+            # geometric guard, not a line-search safeguard: the goal is to stop any
+            # single vertex from crossing whole cells and breaking the incremental T1
+            # detector, which is a per-vertex condition.
+            #
+            # Scaling every vertex by one shared factor would preserve the global
+            # descent direction, but a single fast vertex would then throttle the whole
+            # mesh. That trade was decided in favour of per-vertex clipping.
+            #
+            # Opt-in via cap_vertex_step: only line-search solvers choose their own
+            # step size and need it. Fixed-step solvers happened to be unaffected on
+            # the 20-cell bench (their steps sat below the cap), but that is a
+            # property of those settings, not a guarantee -- sgd(lr=0.01) with
+            # min_dist_T1=0.005 gives a cap of 0.025 that does bite. Gating it keeps
+            # them untouched by construction rather than by coincidence.
             vstep = updates[0].at[sel].get()
-            vnorm = jnp.linalg.norm(vstep, axis=1, keepdims=True)
-            vscale = jnp.minimum(1.0, max_step / jnp.maximum(vnorm, 1e-12))
-            new_vt = vt.at[sel].set(vt[sel] + vstep * vscale)
+            if cap_vertex_step:
+                max_step = MAX_VERTEX_STEP_FACTOR * min_dist_T1
+                vnorm = jnp.linalg.norm(vstep, axis=1, keepdims=True)
+                vscale = jnp.minimum(1.0, max_step / jnp.maximum(vnorm, 1e-12))
+                vstep = vstep * vscale
+            new_vt = vt.at[sel].set(vt[sel] + vstep)
             new_at = at + updates[1]
             vt = lax.cond(is_running, lambda: new_vt, lambda: vt)
             at = lax.cond(is_running, lambda: new_at, lambda: at)
@@ -364,8 +385,17 @@ def inner_opt_bounded(
     selected_faces: Array | None = None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     perform_energy_check: bool = False,
+    cap_vertex_step: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array], Array]:
-    """Inner optimization for a bounded mesh."""
+    """Inner optimization for a bounded mesh.
+
+    Args:
+        cap_vertex_step: Clip each per-step vertex displacement to
+            MAX_VERTEX_STEP_FACTOR * min_dist_T1. Intended for line-search solvers
+            (cg_linesearch, gd_linesearch, lbfgs), which choose their own step size
+            and can otherwise move a vertex across whole cells in one iteration.
+            Off by default, so fixed-step solvers (adam, sgd) are untouched.
+    """
     # Use the general minimize function with argnums=0 (optimize vertTable)
     (vt_f, at_f, ht_f, ft_f, _vp_f, _hp_f, _fp_f), (L_hist_full, step_f_array) = _minimize_bounded(
         vertTable,
@@ -387,6 +417,7 @@ def inner_opt_bounded(
         argnums=0,
         update_T1_func=update_T1_func,
         perform_energy_check=perform_energy_check,
+        cap_vertex_step=cap_vertex_step,
     )
 
     # Convert the JAX array step_f to a Python integer
