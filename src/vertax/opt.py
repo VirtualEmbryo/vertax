@@ -1,5 +1,6 @@
 """Optimization methods for VertAX."""
 
+import os
 from collections.abc import Callable
 from enum import Enum
 from functools import partial
@@ -15,6 +16,32 @@ from scipy.sparse.linalg import LinearOperator, minres
 from vertax.geo import update_pbc
 from vertax.method_enum import BilevelOptimizationMethod
 from vertax.topo import update_T1
+
+# Per-step cap on how far a single vertex may move during inner relaxation,
+# expressed as a MULTIPLE of min_dist_T1 rather than as an absolute length.
+#
+# The incremental T1 detector fires when an edge shrinks below min_dist_T1, and it
+# assumes vertices move by comparable amounts each iteration. Line-search solvers
+# (cg_linesearch, gd_linesearch, lbfgs) choose their own step size and can take
+# steps of order 1, letting a vertex jump across whole cells in one iteration and
+# producing tangled arcs / spurious-looking cells.
+#
+# Tying the cap to min_dist_T1 makes it scale-free: the same setting behaves the
+# same on a unit-sized mesh and on one a hundred times larger, whereas an absolute
+# cap would throttle the big mesh and do nothing on the small one. The factor is
+# how many T1 thresholds a vertex may cross per iteration; 5 keeps steps on the
+# detector's scale while leaving the solvers room to make progress.
+#
+# Under PBC a vertex leaving the box is wrapped back inside by update_pbc, so an
+# uncapped step is not merely large but ambiguous: the wrap makes a jump across
+# the box indistinguishable from a short move the other way. Capping the step
+# keeps displacements well below the box size, where the wrap stays unambiguous.
+#
+# Set VERTAX_MAX_VERTEX_STEP_FACTOR to override; a large value effectively
+# disables the cap and restores the previous unbounded behaviour. This mirrors
+# MAX_VERTEX_STEP_FACTOR in opt_bounded, and reads the same variable so a single
+# setting governs both mesh types.
+MAX_VERTEX_STEP_FACTOR = float(os.environ.get("VERTAX_MAX_VERTEX_STEP_FACTOR", "5.0"))
 
 
 class OptimizationTarget(Enum):
@@ -96,7 +123,7 @@ UpdateT1Func = Callable[
 ###############################
 
 
-@partial(jit, static_argnums=(9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19))
+@partial(jit, static_argnums=(9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20))
 def _jit_minimize(  # noqa: C901
     vertTable: Array,
     heTable: Array,
@@ -118,6 +145,7 @@ def _jit_minimize(  # noqa: C901
     optimization_target: OptimizationTarget = OptimizationTarget.VERTICES,
     update_t1_func: UpdateT1Func = update_T1,
     perform_energy_check: bool = False,
+    cap_vertex_step: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     x0: Array = [vertTable, heTable, faceTable, vert_params, he_params, face_params][optimization_target.value]
     sel: Array = [
@@ -282,6 +310,39 @@ def _jit_minimize(  # noqa: C901
         # Apply updates to the chosen array on selected indices
         updates_sel = updates.at[sel].get()
 
+        # Cap the per-step vertex move so large line-search steps (cg_linesearch,
+        # gd_linesearch) stay on the scale the incremental T1 detector expects.
+        # The cap is relative to min_dist_T1, so it follows the mesh's own scale.
+        #
+        # This clips PER VERTEX: each vertex keeps its own direction, but a vertex
+        # already under the cap is left alone while a faster one is pulled back to
+        # exactly max_step. Relative magnitudes between vertices are therefore not
+        # preserved -- steps of 0.03 and 3.0 both come out at the cap -- so the
+        # descent direction of the mesh as a whole IS altered. This is a local
+        # geometric guard, not a line-search safeguard: the goal is to stop any
+        # single vertex from crossing whole cells and breaking the incremental T1
+        # detector, which is a per-vertex condition.
+        #
+        # Scaling every vertex by one shared factor would preserve the global
+        # descent direction, but a single fast vertex would then throttle the whole
+        # mesh. That trade was decided in favour of per-vertex clipping.
+        #
+        # Vertices only: the other targets (half-edge / face parameters) are not
+        # displacements, so a length-scale cap would be meaningless for them.
+        # Columns 0/1 of vertTable are x/y, as in the bounded case, so the norm
+        # is taken over axis 1.
+        #
+        # Opt-in via cap_vertex_step: only line-search solvers (cg_linesearch,
+        # gd_linesearch, lbfgs) pick their own step size and need it. Applying it
+        # unconditionally would silently alter fixed-step solvers whenever the cap
+        # falls below their step -- sgd(lr=0.01) with min_dist_T1=0.005 gives a cap
+        # of 0.025, which does bite and shifts the result.
+        if argnums == 0 and cap_vertex_step:
+            max_step = MAX_VERTEX_STEP_FACTOR * min_dist_T1
+            vnorm = jnp.linalg.norm(updates_sel, axis=1, keepdims=True)
+            vscale = jnp.minimum(1.0, max_step / jnp.maximum(vnorm, 1e-12))
+            updates_sel = updates_sel * vscale
+
         # Conditional application of optimization update and state
         arrays = [vt, ht, ft, vp, hp, fp]
         k = optimization_target.value
@@ -391,8 +452,17 @@ def minimize(
     optimization_target: OptimizationTarget = OptimizationTarget.VERTICES,
     update_t1_func: UpdateT1Func = update_T1,
     perform_energy_check: bool = False,
+    cap_vertex_step: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
-    """General minimization function."""
+    """General minimization function.
+
+    Args:
+        cap_vertex_step: Clip each per-step vertex displacement to
+            MAX_VERTEX_STEP_FACTOR * min_dist_T1. Intended for line-search solvers
+            (cg_linesearch, gd_linesearch, lbfgs), which choose their own step size
+            and can otherwise move a vertex across whole cells in one iteration.
+            Off by default, so fixed-step solvers (adam, sgd) are untouched.
+    """
     # ensure width and height are hashable...
     width = float(width)
     height = float(height)
@@ -430,6 +500,7 @@ def minimize(
             optimization_target=optimization_target,
             update_t1_func=update_t1_func,
             perform_energy_check=perform_energy_check,
+            cap_vertex_step=cap_vertex_step,
         )
     )
 
