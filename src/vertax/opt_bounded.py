@@ -1,5 +1,6 @@
 """Optimization methods for VertAX (bounded version)."""
 
+import os
 from collections.abc import Callable
 from functools import partial
 
@@ -12,6 +13,25 @@ from scipy.sparse.linalg import LinearOperator, minres
 
 from vertax.method_enum import BilevelOptimizationMethod
 from vertax.topo import update_T1_bounded
+
+# Per-step cap on how far a single vertex may move during inner relaxation,
+# expressed as a MULTIPLE of min_dist_T1 rather than as an absolute length.
+#
+# The incremental T1 detector fires when an edge shrinks below min_dist_T1, and it
+# assumes vertices move by comparable amounts each iteration. Line-search solvers
+# (cg_linesearch, gd_linesearch, lbfgs) choose their own step size and can take
+# steps of order 1, letting a vertex jump across whole cells in one iteration and
+# producing tangled arcs / spurious-looking cells.
+#
+# Tying the cap to min_dist_T1 makes it scale-free: the same setting behaves the
+# same on a unit-sized mesh and on one a hundred times larger, whereas an absolute
+# cap would throttle the big mesh and do nothing on the small one. The factor is
+# how many T1 thresholds a vertex may cross per iteration; 5 keeps steps on the
+# detector's scale while leaving the solvers room to make progress.
+#
+# Set VERTAX_MAX_VERTEX_STEP_FACTOR to override; a large value effectively
+# disables the cap and restores the previous unbounded behaviour.
+MAX_VERTEX_STEP_FACTOR = float(os.environ.get("VERTAX_MAX_VERTEX_STEP_FACTOR", "5.0"))
 
 InnerLossFunctionBounded = Callable[
     [Array, Array, Array, Array, Array | None, Array | None, Array | None, Array, Array, Array], Array
@@ -222,7 +242,17 @@ def _minimize_bounded(  # noqa: C901
 
         # Apply updates to the chosen array on selected indices
         if argnums == 0:
-            new_vt = vt.at[sel].set(vt[sel] + updates[0].at[sel].get())
+            # Cap the per-step vertex move so large line-search steps (cg_linesearch,
+            # gd_linesearch) stay on the scale the incremental T1 detector expects.
+            # The cap is relative to min_dist_T1, so it follows the mesh's own scale.
+            # Only the magnitude is clipped; the direction is untouched, so this
+            # shortens steps without changing the descent direction. Angles ride
+            # along unscaled.
+            max_step = MAX_VERTEX_STEP_FACTOR * min_dist_T1
+            vstep = updates[0].at[sel].get()
+            vnorm = jnp.linalg.norm(vstep, axis=1, keepdims=True)
+            vscale = jnp.minimum(1.0, max_step / jnp.maximum(vnorm, 1e-12))
+            new_vt = vt.at[sel].set(vt[sel] + vstep * vscale)
             new_at = at + updates[1]
             vt = lax.cond(is_running, lambda: new_vt, lambda: vt)
             at = lax.cond(is_running, lambda: new_at, lambda: at)
