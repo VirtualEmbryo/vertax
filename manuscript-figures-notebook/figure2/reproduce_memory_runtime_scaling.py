@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Reproduce "Fig. 2 f-g.
-
-Benchmarking bilevel optimization strategies for mechanical parameter inference
-in VertAX.
+"""
+Reproduce "Fig. 2 f-g Benchmarking bilevel optimization strategies for mechanical parameter inference
+in VertAX".
 
 What is measured
 ----------------
@@ -24,7 +23,7 @@ Usage
 -----
 1) Make VertAX importable (from this folder).
 
-2) Paper settings (long: 5 runs * 4 methods * 5 sizes * 51 epochs):
+2) Paper settings (long: 5 runs × 4 methods × 5 sizes × 51 epochs):
 
    python reproduce_memory_runtime_scaling.py
 
@@ -40,6 +39,7 @@ Usage
    --epochs 50               outer epochs (paper: 50)
    --n-cells 20 30 40 50 60  system sizes (paper: those five)
    --plots-only              rebuild plots from existing pickles
+   --in-process              skip subprocess isolation (debug only; USS leaks)
 
 4) Quick smoke test:
 
@@ -53,17 +53,14 @@ Usage
 from __future__ import annotations
 
 import argparse
-import builtins
-import contextlib
-import gc
 import math
 import os
 import pickle
 import shutil
+import subprocess
 import sys
 import time
 from collections import defaultdict
-from copy import copy
 from pathlib import Path
 
 # Force CPU for reproducibility.
@@ -87,6 +84,7 @@ from vertax.energy import energy_shape_factor_hetero
 # Paths / method metadata
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_PATH = Path(__file__).resolve()
 OUTPUT_ROOT = SCRIPT_DIR / "outputs_scaling"
 PLOTS_DIR = OUTPUT_ROOT / "paper_plots"
 DETAILED_DATA_FILE = "scaling_detailed_raw_data.pkl"
@@ -120,21 +118,8 @@ METHOD_SPECS = {
 
 
 # ---------------------------------------------------------------------------
-# Utilities (cache clear / memory / energy / optimizer)
+# Utilities (memory / energy / optimizer)
 # ---------------------------------------------------------------------------
-def clear_jax_caches() -> None:
-    """Best-effort clear of JAX caches between runs."""
-    frozen_modules = copy(sys.modules)
-    for module_name, module in frozen_modules.items():
-        if module_name.startswith("jax") and module_name not in {"jax.interpreters.partial_eval"}:
-            for obj_name in dir(module):
-                obj = getattr(module, obj_name)
-                if hasattr(obj, "cache_clear"):
-                    with contextlib.suppress(builtins.BaseException):
-                        obj.cache_clear()
-    gc.collect()
-
-
 def get_uss_mb() -> float:
     """Unique Set Size of the current process, in megabytes."""
     try:
@@ -187,32 +172,147 @@ def make_optimizer(method_code: str) -> PbcBilevelOptimizer:
     return opt
 
 
+def method_dir(method_code: str) -> Path:
+    return OUTPUT_ROOT / f"{method_code}_memory_runtime_increasing_cells"
+
+
+def run_pickle_path(method_code: str, n_cells: int, run_id: int) -> Path:
+    return method_dir(method_code) / f"n_cells_{n_cells}" / f"run_{run_id}_raw.pkl"
+
+
 # ---------------------------------------------------------------------------
-# Core experiment: one method across increasing n_cells
+# Core experiment: one isolated (method, n_cells, run)
 # ---------------------------------------------------------------------------
-def run_method_scaling(
+def run_single_experiment(
+    method_code: str,
+    n_cells: int,
+    run_id: int,
+    epochs: int,
+    mean_shape_factors: float,
+    std_shape_factors: float,
+) -> dict:
+    """Run one bilevel scaling trial and return its raw record."""
+    width = height = math.sqrt(n_cells)
+    energy = make_shape_factor_energy(width, height)
+
+    print(
+        f"\n--- [{method_code}] run {run_id + 1} (n_cells={n_cells}) "
+        f"[pid={os.getpid()}] ---"
+    )
+
+    # Seeds: i*333, i*333+1, i*333+2
+    key_geom = run_id * 333
+    key_params = jax.random.PRNGKey(run_id * 333 + 1)
+    key_target = jax.random.PRNGKey(run_id * 333 + 2)
+
+    opt = make_optimizer(method_code)
+    opt.loss_function_inner = energy
+    opt.loss_function_outer = cost_v2v
+
+    # Initial mesh + parameters
+    mesh = PbcMesh.from_random_seeds(
+        nb_seeds=n_cells, width=width, height=height, random_key=key_geom
+    )
+    mesh.vertices_params = jnp.zeros(mesh.nb_vertices)
+    mesh.edges_params = jnp.zeros(mesh.nb_half_edges)
+    mesh.faces_params = mean_shape_factors + std_shape_factors * jax.random.normal(
+        key_params, shape=(mesh.nb_faces,)
+    )
+    opt.inner_optimization(mesh)
+
+    # Target mesh
+    target = PbcMesh.copy_mesh(mesh)
+    target.vertices_params = jnp.zeros(target.nb_vertices)
+    target.edges_params = jnp.zeros(target.nb_half_edges)
+    target.faces_params = mean_shape_factors + std_shape_factors * jax.random.normal(
+        key_target, shape=(target.nb_faces,)
+    )
+    opt.inner_optimization(target)
+    opt.vertices_target = target.vertices.copy()
+    opt.edges_target = target.edges.copy()
+    opt.faces_target = target.faces.copy()
+    del target
+
+    runtime_per_epoch: list[float] = []
+    uss_history: list[float] = []
+    cumulative = 0.0
+
+    for epoch in range(epochs + 1):
+        # --- Time ONLY the outer step ---
+        t0 = time.time()
+        opt.outer_optimization(mesh)
+        block_until_ready_on_pytree(
+            (mesh.vertices_params, mesh.edges_params, mesh.faces_params)
+        )
+        duration = time.time() - t0
+        runtime_per_epoch.append(duration)
+        cumulative += duration
+
+        uss = get_uss_mb()
+        uss_history.append(uss)
+
+        # Re-equilibrate (not included in the timed outer duration).
+        opt.inner_optimization(mesh, perform_energy_check=False)
+
+        print(
+            f"  epoch {epoch}: runtime={duration:.4f}s  "
+            f"cum={cumulative:.2f}s  USS={uss:.2f} MB"
+        )
+
+    uss_arr = np.asarray(uss_history, dtype=float)
+    runt_arr = np.asarray(runtime_per_epoch, dtype=float)
+    peak_scaling = float(np.max(uss_arr[1:])) if len(uss_arr) > 1 else float(np.max(uss_arr))
+
+    return {
+        "n_cells": n_cells,
+        "run_id": run_id,
+        "peak_mem_mb_all_epochs": float(np.max(uss_arr)),
+        "peak_mem_mb_scaling": peak_scaling,
+        "uss_history_mb": uss_arr,
+        "runtime_per_epoch_s": runt_arr,
+    }
+
+
+def save_run_record(method_code: str, record: dict) -> Path:
+    """Persist one run pickle under n_cells_*/run_*_raw.pkl."""
+    out = run_pickle_path(method_code, int(record["n_cells"]), int(record["run_id"]))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "wb") as f:
+        pickle.dump(record, f)
+    print(f"  Saved run record → {out}")
+    return out
+
+
+def load_run_records(method_code: str, n_cells_list: list[int], n_runs: int) -> list[dict]:
+    """Load per-run pickles in stable (n_cells, run_id) order."""
+    detailed: list[dict] = []
+    for n_cells in n_cells_list:
+        for run_id in range(n_runs):
+            path = run_pickle_path(method_code, n_cells, run_id)
+            if not path.exists():
+                raise FileNotFoundError(f"Missing isolated-run pickle: {path}")
+            with open(path, "rb") as f:
+                detailed.append(pickle.load(f))
+    return detailed
+
+
+def aggregate_method_outputs(
     method_code: str,
     n_cells_list: list[int],
     n_runs: int,
     epochs: int,
-    mean_shape_factors: float,
-    std_shape_factors: float,
 ) -> list[dict]:
-    """Run the memory/runtime experiment for one bilevel method.
-
-    Returns a list of per-run raw records (pickled for later replotting),.
-    """
-    method_dir = OUTPUT_ROOT / f"{method_code}_memory_runtime_increasing_cells"
-    method_dir.mkdir(parents=True, exist_ok=True)
+    """Build per-method summary plots + DETAILED_DATA_FILE from run pickles."""
+    mdir = method_dir(method_code)
+    mdir.mkdir(parents=True, exist_ok=True)
 
     try:
-        shutil.copy(Path(__file__).resolve(), method_dir / Path(__file__).name)
+        shutil.copy(SCRIPT_PATH, mdir / SCRIPT_PATH.name)
     except OSError as exc:
         print(f"  [warn] Could not copy script: {exc}")
 
-    detailed: list[dict] = []
+    detailed = load_run_records(method_code, n_cells_list, n_runs)
 
-    # Aggregates for the per-method summary plot.
     global_n_cells: list[int] = []
     global_mean_peak_mem: list[float] = []
     global_std_peak_mem: list[float] = []
@@ -220,94 +320,19 @@ def run_method_scaling(
     global_std_runtime: list[float] = []
 
     for n_cells in n_cells_list:
-        cells_dir = method_dir / f"n_cells_{n_cells}"
+        cells_dir = mdir / f"n_cells_{n_cells}"
         cells_dir.mkdir(parents=True, exist_ok=True)
-        print(f"\n===== [{method_code}] n_cells = {n_cells} =====")
-
-        width = height = math.sqrt(n_cells)
-        energy = make_shape_factor_energy(width, height)
-
-        all_runtime: list[np.ndarray] = []
-        all_uss: list[np.ndarray] = []
-        peak_mems: list[float] = []
-
-        for run_i in range(n_runs):
-            print(f"\n--- [{method_code}] run {run_i + 1}/{n_runs} (n_cells={n_cells}) ---")
-            clear_jax_caches()
-
-            # Seeds: i*333, i*333+1, i*333+2
-            key_geom = run_i * 333
-            key_params = jax.random.PRNGKey(run_i * 333 + 1)
-            key_target = jax.random.PRNGKey(run_i * 333 + 2)
-
-            opt = make_optimizer(method_code)
-            opt.loss_function_inner = energy
-            opt.loss_function_outer = cost_v2v
-
-            # Initial mesh + parameters
-            mesh = PbcMesh.from_random_seeds(nb_seeds=n_cells, width=width, height=height, random_key=key_geom)
-            mesh.vertices_params = jnp.zeros(mesh.nb_vertices)
-            mesh.edges_params = jnp.zeros(mesh.nb_half_edges)
-            mesh.faces_params = mean_shape_factors + std_shape_factors * jax.random.normal(
-                key_params, shape=(mesh.nb_faces,)
-            )
-            opt.inner_optimization(mesh)
-
-            # Target mesh
-            target = PbcMesh.copy_mesh(mesh)
-            target.vertices_params = jnp.zeros(target.nb_vertices)
-            target.edges_params = jnp.zeros(target.nb_half_edges)
-            target.faces_params = mean_shape_factors + std_shape_factors * jax.random.normal(
-                key_target, shape=(target.nb_faces,)
-            )
-            opt.inner_optimization(target)
-            opt.vertices_target = target.vertices.copy()
-            opt.edges_target = target.edges.copy()
-            opt.faces_target = target.faces.copy()
-            del target
-
-            runtime_per_epoch: list[float] = []
-            uss_history: list[float] = []
-            cumulative = 0.0
-
-            for epoch in range(epochs + 1):
-                # --- Time ONLY the outer step ---
-                t0 = time.time()
-                opt.outer_optimization(mesh)
-                block_until_ready_on_pytree((mesh.vertices_params, mesh.edges_params, mesh.faces_params))
-                duration = time.time() - t0
-                runtime_per_epoch.append(duration)
-                cumulative += duration
-
-                uss = get_uss_mb()
-                uss_history.append(uss)
-
-                # Re-equilibrate (not included in the timed outer duration).
-                opt.inner_optimization(mesh, perform_energy_check=False)
-
-                print(f"  epoch {epoch}: runtime={duration:.4f}s  cum={cumulative:.2f}s  USS={uss:.2f} MB")
-
-            uss_arr = np.asarray(uss_history, dtype=float)
-            runt_arr = np.asarray(runtime_per_epoch, dtype=float)
-            all_uss.append(uss_arr)
-            all_runtime.append(runt_arr)
-
-            # Exclude epoch 0 from peak memory used for scaling plots.
-            peak_scaling = float(np.max(uss_arr[1:])) if len(uss_arr) > 1 else float(np.max(uss_arr))
-            peak_mems.append(peak_scaling)
-
-            detailed.append(
-                {
-                    "n_cells": n_cells,
-                    "run_id": run_i,
-                    "peak_mem_mb_all_epochs": float(np.max(uss_arr)),
-                    "peak_mem_mb_scaling": peak_scaling,
-                    "uss_history_mb": uss_arr,
-                    "runtime_per_epoch_s": runt_arr,
-                }
+        runs = [r for r in detailed if int(r["n_cells"]) == n_cells]
+        runs = sorted(runs, key=lambda r: int(r["run_id"]))
+        if len(runs) != n_runs:
+            raise RuntimeError(
+                f"[{method_code}] n_cells={n_cells}: expected {n_runs} runs, found {len(runs)}"
             )
 
-        # --- Per-n_cells averaged history plots ---
+        all_runtime = [np.asarray(r["runtime_per_epoch_s"], dtype=float) for r in runs]
+        all_uss = [np.asarray(r["uss_history_mb"], dtype=float) for r in runs]
+        peak_mems = [float(r["peak_mem_mb_scaling"]) for r in runs]
+
         runtime_epoch_array = np.stack(all_runtime, axis=0)
         uss_array = np.stack(all_uss, axis=0)
         mean_runt = runtime_epoch_array.mean(axis=0)
@@ -323,11 +348,15 @@ def run_method_scaling(
         axes[0].fill_between(mean_cum, mean_uss - std_uss, mean_uss + std_uss, color="red", alpha=alpha)
         axes[0].set_ylabel("Mean Memory (MB)")
         axes[0].set_xlabel("Mean Cumulative Runtime (s)")
-        axes[0].set_title(f"Memory & Runtime Metrics for $n_{{cells}}={n_cells}$ ({n_runs} Runs) [{method_code}]")
+        axes[0].set_title(
+            f"Memory & Runtime Metrics for $n_{{cells}}={n_cells}$ ({n_runs} Runs) [{method_code}]"
+        )
         axes[0].grid(True, linestyle="--", alpha=0.6)
 
         axes[1].plot(epoch_numbers, mean_runt, color="green", marker="^", markersize=2)
-        axes[1].fill_between(epoch_numbers, mean_runt - std_runt, mean_runt + std_runt, color="green", alpha=alpha)
+        axes[1].fill_between(
+            epoch_numbers, mean_runt - std_runt, mean_runt + std_runt, color="green", alpha=alpha
+        )
         axes[1].set_xlabel("Epoch Number")
         axes[1].set_ylabel("Mean Runtime per Epoch (s)")
         axes[1].grid(True, linestyle="--", alpha=0.6)
@@ -335,7 +364,6 @@ def run_method_scaling(
         plt.savefig(cells_dir / "memo_runt_plots_averaged.pdf")
         plt.close()
 
-        # Scaling aggregates (exclude epoch 0).
         global_n_cells.append(n_cells)
         global_mean_peak_mem.append(float(np.mean(peak_mems)))
         global_std_peak_mem.append(float(np.std(peak_mems)))
@@ -344,7 +372,6 @@ def run_method_scaling(
         global_mean_runtime.append(float(np.mean(mean_runtime_across_runs)))
         global_std_runtime.append(float(np.std(mean_runtime_across_runs)))
 
-    # --- Per-method summary plot ---
     g_n = np.asarray(global_n_cells)
     g_mem_m = np.asarray(global_mean_peak_mem)
     g_mem_s = np.asarray(global_std_peak_mem)
@@ -383,12 +410,12 @@ def run_method_scaling(
     axes[1].grid(True, which="both", ls="--", alpha=0.6)
     axes[1].legend(loc="upper left")
     plt.tight_layout()
-    plt.savefig(method_dir / "final_scaling_memory_and_runtime_analysis_excl_epoch_0.pdf")
+    plt.savefig(mdir / "final_scaling_memory_and_runtime_analysis_excl_epoch_0.pdf")
     plt.close()
 
     summary = np.column_stack((g_n, g_mem_m, g_mem_s, g_runt_m, g_runt_s))
     np.savetxt(
-        method_dir / "scaling_summary_stats_excl_epoch_0.txt",
+        mdir / "scaling_summary_stats_excl_epoch_0.txt",
         summary,
         delimiter=",",
         header=(
@@ -398,11 +425,85 @@ def run_method_scaling(
         comments="",
     )
 
-    with open(method_dir / DETAILED_DATA_FILE, "wb") as f:
+    with open(mdir / DETAILED_DATA_FILE, "wb") as f:
         pickle.dump(detailed, f)
-    print(f"[{method_code}] Saved detailed data → {method_dir / DETAILED_DATA_FILE}")
+    print(f"[{method_code}] Saved detailed data → {mdir / DETAILED_DATA_FILE}")
 
     return detailed
+
+
+# ---------------------------------------------------------------------------
+# Subprocess orchestration
+# ---------------------------------------------------------------------------
+def launch_isolated_run(
+    method_code: str,
+    n_cells: int,
+    run_id: int,
+    epochs: int,
+    mean_shape_factors: float,
+    std_shape_factors: float,
+) -> None:
+    """Spawn a fresh Python process for one (method, n_cells, run_id)."""
+    cmd = [
+        sys.executable,
+        str(SCRIPT_PATH),
+        "--worker",
+        "--methods",
+        method_code,
+        "--n-cells",
+        str(n_cells),
+        "--run-id",
+        str(run_id),
+        "--n-runs",
+        "1",
+        "--epochs",
+        str(epochs),
+        "--mean-shape-factors",
+        str(mean_shape_factors),
+        "--std-shape-factors",
+        str(std_shape_factors),
+    ]
+    print(f"\n>>> subprocess: {' '.join(cmd)}")
+    subprocess.run(cmd, check=True)
+
+
+def run_method_scaling_isolated(
+    method_code: str,
+    n_cells_list: list[int],
+    n_runs: int,
+    epochs: int,
+    mean_shape_factors: float,
+    std_shape_factors: float,
+    in_process: bool = False,
+) -> list[dict]:
+    """Run all (n_cells, run) trials for one method, then aggregate."""
+    mdir = method_dir(method_code)
+    mdir.mkdir(parents=True, exist_ok=True)
+
+    for n_cells in n_cells_list:
+        print(f"\n===== [{method_code}] n_cells = {n_cells} =====")
+        for run_id in range(n_runs):
+            if in_process:
+                record = run_single_experiment(
+                    method_code=method_code,
+                    n_cells=n_cells,
+                    run_id=run_id,
+                    epochs=epochs,
+                    mean_shape_factors=mean_shape_factors,
+                    std_shape_factors=std_shape_factors,
+                )
+                save_run_record(method_code, record)
+            else:
+                launch_isolated_run(
+                    method_code=method_code,
+                    n_cells=n_cells,
+                    run_id=run_id,
+                    epochs=epochs,
+                    mean_shape_factors=mean_shape_factors,
+                    std_shape_factors=std_shape_factors,
+                )
+
+    return aggregate_method_outputs(method_code, n_cells_list, n_runs, epochs)
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +511,7 @@ def run_method_scaling(
 # ---------------------------------------------------------------------------
 def load_and_group(method_code: str):
     """Load pickle and group records by n_cells."""
-    path = OUTPUT_ROOT / f"{method_code}_memory_runtime_increasing_cells" / DETAILED_DATA_FILE
+    path = method_dir(method_code) / DETAILED_DATA_FILE
     if not path.exists():
         print(f"  [warn] Missing {path}")
         return None, None
@@ -529,7 +630,10 @@ def plot_paper_scaling(methods: list[str]) -> None:
 # ---------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Reproduce Fig. 2 f-g Benchmarking bilevel optimization strategies for mechanical parameter inference in VertAX."
+        description=(
+            "Reproduce Fig. 2 f-g Benchmarking bilevel optimization strategies "
+            "for mechanical parameter inference in VertAX."
+        )
     )
     parser.add_argument(
         "--methods",
@@ -553,6 +657,22 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip simulations; rebuild scaling_memory.pdf / scaling_runtime.pdf from pickles.",
     )
+    parser.add_argument(
+        "--worker",
+        action="store_true",
+        help="Internal: run a single isolated (method, n_cells, run-id) and exit.",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="0-based run index (required with --worker).",
+    )
+    parser.add_argument(
+        "--in-process",
+        action="store_true",
+        help="Run all trials in one process (debug only; USS will accumulate).",
+    )
     return parser.parse_args()
 
 
@@ -564,16 +684,41 @@ def main() -> None:
     print("VertAX devices:", jax.devices())
     print(f"Output root: {OUTPUT_ROOT}")
 
+    # --- Worker: one isolated run in this process, then exit ---
+    if args.worker:
+        if args.run_id is None:
+            raise SystemExit("--worker requires --run-id")
+        if len(args.methods) != 1:
+            raise SystemExit("--worker requires exactly one --methods code")
+        if len(args.n_cells) != 1:
+            raise SystemExit("--worker requires exactly one --n-cells value")
+
+        method_code = args.methods[0]
+        n_cells = int(args.n_cells[0])
+        record = run_single_experiment(
+            method_code=method_code,
+            n_cells=n_cells,
+            run_id=int(args.run_id),
+            epochs=args.epochs,
+            mean_shape_factors=args.mean_shape_factors,
+            std_shape_factors=args.std_shape_factors,
+        )
+        save_run_record(method_code, record)
+        return
+
     if not args.plots_only:
+        if args.in_process:
+            print("[warn] --in-process: USS will accumulate across runs/methods.")
         for method_code in args.methods:
             print(f"\n########## METHOD {method_code} ##########")
-            run_method_scaling(
+            run_method_scaling_isolated(
                 method_code=method_code,
                 n_cells_list=list(args.n_cells),
                 n_runs=args.n_runs,
                 epochs=args.epochs,
                 mean_shape_factors=args.mean_shape_factors,
                 std_shape_factors=args.std_shape_factors,
+                in_process=args.in_process,
             )
 
     print("\n=== Generating paper scaling plots ===")

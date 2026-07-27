@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Reproduce Fig. 2 a-e.
-
-Benchmarking bilevel optimization strategies for mechanical
-parameter inference in VertAX.
+"""
+Reproduce "Fig. 2 a-e Benchmarking bilevel optimization strategies for mechanical
+parameter inference in VertAX".
 
 What is measured
 ----------------
@@ -18,7 +17,7 @@ For each method ∈ {AD, EP, AS, ID} and each of 10 random initial conditions
        - record vertex-to-vertex cost C(X, X*);
        - record Pearson correlation corr(p, p*) of predicted vs target
          shape factors;
-       - record relative L1 error ‖p - p*‖₁ / ‖p*‖₁.
+       - record relative L1 error ‖p − p*‖₁ / ‖p*‖₁.
 
 Paper plots aggregate selected runs {1, 2, 4, 5, 8}:
   - mean ± std histories of cost / Pearson / relative error vs epoch
@@ -30,7 +29,7 @@ Usage
 -----
 1) Make VertAX importable (from this folder).
 
-2) Paper settings (long: 10 runs * 4 methods * 351 epochs):
+2) Paper settings (long: 10 runs × 4 methods × 351 epochs):
 
    python reproduce_inverse_modeling_10runs.py
 
@@ -48,6 +47,7 @@ Usage
                              runs used in comparison plots (1-based)
    --save-tables             also dump full mesh tables every epoch (disk-heavy)
    --plots-only              rebuild plots from existing outputs_10runs/
+   --in-process              skip subprocess isolation (debug only; memory leaks)
 
 4) Quick smoke test:
 
@@ -57,11 +57,11 @@ Usage
 
    python reproduce_inverse_modeling_10runs.py --plots-only
 
-Notes:
+Notes
 -----
   - Comparison curves use runs {1, 2, 4, 5, 8} (1-based).
   - Scatter plots use run 2 at epochs 0 and 350.
-  - Full 10 * 4 * 351 bilevel epochs is computationally heavy.
+  - Full 10 × 4 × 351 bilevel epochs is computationally heavy.
 """
 
 from __future__ import annotations
@@ -70,6 +70,8 @@ import argparse
 import math
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 # Force CPU for reproducibility.
@@ -91,10 +93,11 @@ from vertax.energy import energy_shape_factor_hetero
 # Paths / output layout
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_PATH = Path(__file__).resolve()
 OUTPUT_ROOT = SCRIPT_DIR / "outputs_10runs"
 PLOTS_DIR = OUTPUT_ROOT / "paper_plots"
 
-# Method short codes used in folder names / legends
+# Method short codes used in folder names / legends 
 METHOD_SPECS = {
     "AD": {
         "label": "AD Model",
@@ -159,7 +162,8 @@ def make_optimizer(
     min_dist_T1: float = 0.005,
     beta_ep: float = 5.179475e-01,
 ) -> PbcBilevelOptimizer:
-    """Build a `PbcBilevelOptimizer` with the paper hyperparameters."""
+    """Build a `PbcBilevelOptimizer` with the paper hyperparameters.
+    """
     if method_code not in METHOD_SPECS:
         raise ValueError(f"Unknown method '{method_code}'. Choose from {list(METHOD_SPECS)}.")
 
@@ -215,7 +219,8 @@ def run_one_experiment(
     std_shape_factors: float,
     save_every_epoch_tables: bool,
 ) -> dict:
-    """Run one inverse-modeling trajectory and save per-epoch metrics/tables."""
+    """Run one inverse-modeling trajectory and save per-epoch metrics/tables.
+    """
     run_1based = run_idx_zero_based + 1
     method_dir = OUTPUT_ROOT / f"{method_code}_10runs"
     run_dir = method_dir / f"inverse_{method_code}_run_{run_1based}"
@@ -243,7 +248,9 @@ def run_one_experiment(
     mesh.vertices_params = jnp.zeros(mesh.nb_vertices)
     mesh.edges_params = jnp.zeros(mesh.nb_half_edges)
     key_params = jax.random.PRNGKey(run_idx_zero_based + 123 + 1)
-    mesh.faces_params = mean_shape_factors + std_shape_factors * jax.random.normal(key_params, shape=(mesh.nb_faces,))
+    mesh.faces_params = mean_shape_factors + std_shape_factors * jax.random.normal(
+        key_params, shape=(mesh.nb_faces,)
+    )
 
     # Relax initial condition to mechanical equilibrium.
     opt.inner_optimization(mesh)
@@ -315,6 +322,22 @@ def run_one_experiment(
     }
 
 
+def load_run_result(method_code: str, run_1based: int) -> dict:
+    """Load per-run histories written by `run_one_experiment`."""
+    run_dir = OUTPUT_ROOT / f"{method_code}_10runs" / f"inverse_{method_code}_run_{run_1based}"
+    cost_path = run_dir / "cost_history.txt"
+    pearson_path = run_dir / "pearson_history.txt"
+    rel_error_path = run_dir / "rel_error_history.txt"
+    for path in (cost_path, pearson_path, rel_error_path):
+        if not path.exists():
+            raise FileNotFoundError(f"Missing run output: {path}")
+    return {
+        "cost": np.loadtxt(cost_path),
+        "pearson": np.loadtxt(pearson_path),
+        "rel_error": np.loadtxt(rel_error_path),
+    }
+
+
 def save_method_aggregates(method_code: str, all_runs: list[dict]) -> None:
     """Save mean±std curves and last-epoch boxplot data for one method."""
     method_dir = OUTPUT_ROOT / f"{method_code}_10runs"
@@ -354,13 +377,96 @@ def save_method_aggregates(method_code: str, all_runs: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Subprocess orchestration
+# ---------------------------------------------------------------------------
+def launch_isolated_run(
+    method_code: str,
+    run_idx_zero_based: int,
+    epochs: int,
+    n_cells: int,
+    mean_shape_factors: float,
+    std_shape_factors: float,
+    save_tables: bool,
+) -> None:
+    """Spawn a fresh Python process for one (method, run)."""
+    cmd = [
+        sys.executable,
+        str(SCRIPT_PATH),
+        "--worker",
+        "--methods",
+        method_code,
+        "--run-id",
+        str(run_idx_zero_based),
+        "--n-runs",
+        "1",
+        "--epochs",
+        str(epochs),
+        "--n-cells",
+        str(n_cells),
+        "--mean-shape-factors",
+        str(mean_shape_factors),
+        "--std-shape-factors",
+        str(std_shape_factors),
+    ]
+    if save_tables:
+        cmd.append("--save-tables")
+    print(f"\n>>> subprocess: {' '.join(cmd)}")
+    subprocess.run(cmd, check=True)
+
+
+def run_method_isolated(
+    method_code: str,
+    n_runs: int,
+    epochs: int,
+    n_cells: int,
+    mean_shape_factors: float,
+    std_shape_factors: float,
+    save_tables: bool,
+    in_process: bool = False,
+) -> list[dict]:
+    """Run all seeds for one method (subprocess per run by default), then aggregate."""
+    print(f"\n===== Method {method_code} ({METHOD_SPECS[method_code]['enum']}) =====")
+    for run in range(n_runs):
+        print(f"Run {run + 1}/{n_runs}")
+        if in_process:
+            run_one_experiment(
+                method_code=method_code,
+                run_idx_zero_based=run,
+                epochs=epochs,
+                n_cells=n_cells,
+                mean_shape_factors=mean_shape_factors,
+                std_shape_factors=std_shape_factors,
+                save_every_epoch_tables=save_tables,
+            )
+        else:
+            launch_isolated_run(
+                method_code=method_code,
+                run_idx_zero_based=run,
+                epochs=epochs,
+                n_cells=n_cells,
+                mean_shape_factors=mean_shape_factors,
+                std_shape_factors=std_shape_factors,
+                save_tables=save_tables,
+            )
+
+    all_runs = [load_run_result(method_code, run + 1) for run in range(n_runs)]
+    save_method_aggregates(method_code, all_runs)
+    return all_runs
+
+
+# ---------------------------------------------------------------------------
 # Paper comparison / scatter plots
 # ---------------------------------------------------------------------------
 def _load_selected_histories(method_code: str, metric: str, run_indices_1based: list[int]) -> np.ndarray | None:
     """Load `{metric}_history.txt` for selected runs of one method."""
     histories = []
     for run_num in run_indices_1based:
-        path = OUTPUT_ROOT / f"{method_code}_10runs" / f"inverse_{method_code}_run_{run_num}" / f"{metric}_history.txt"
+        path = (
+            OUTPUT_ROOT
+            / f"{method_code}_10runs"
+            / f"inverse_{method_code}_run_{run_num}"
+            / f"{metric}_history.txt"
+        )
         if not path.exists():
             print(f"  [warn] Missing {path}")
             continue
@@ -564,7 +670,11 @@ def make_all_paper_plots(methods: list[str], epochs: int, run_indices_1based: li
     # Prefer paper run index 2; fall back to the first available comparison run.
     scatter_run = SCATTER_RUN_INDEX if SCATTER_RUN_INDEX in run_indices_1based else run_indices_1based[0]
     plot_scatter_comparison(0, methods, scatter_run, "comparison_epoch_0.pdf")
-    final_name = "comparison_epoch_350_overlap.pdf" if epochs == 350 else f"comparison_epoch_{epochs}_overlap.pdf"
+    final_name = (
+        "comparison_epoch_350_overlap.pdf"
+        if epochs == 350
+        else f"comparison_epoch_{epochs}_overlap.pdf"
+    )
     plot_scatter_comparison(epochs, methods, scatter_run, final_name)
 
 
@@ -604,6 +714,22 @@ def parse_args() -> argparse.Namespace:
         default=COMPARISON_RUN_INDICES,
         help="1-based run indices used for multi-method comparison plots.",
     )
+    parser.add_argument(
+        "--worker",
+        action="store_true",
+        help="Internal: run a single isolated (method, run-id) and exit.",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="0-based run index (required with --worker).",
+    )
+    parser.add_argument(
+        "--in-process",
+        action="store_true",
+        help="Run all trials in one process (debug only; XLA memory will accumulate).",
+    )
     return parser.parse_args()
 
 
@@ -615,23 +741,37 @@ def main() -> None:
     print("VertAX devices:", jax.devices())
     print(f"Output root: {OUTPUT_ROOT}")
 
+    # --- Worker: one isolated run in this process, then exit ---
+    if args.worker:
+        if args.run_id is None:
+            raise SystemExit("--worker requires --run-id")
+        if len(args.methods) != 1:
+            raise SystemExit("--worker requires exactly one --methods code")
+        run_one_experiment(
+            method_code=args.methods[0],
+            run_idx_zero_based=int(args.run_id),
+            epochs=args.epochs,
+            n_cells=args.n_cells,
+            mean_shape_factors=args.mean_shape_factors,
+            std_shape_factors=args.std_shape_factors,
+            save_every_epoch_tables=args.save_tables,
+        )
+        return
+
     if not args.plots_only:
+        if args.in_process:
+            print("[warn] --in-process: XLA/JAX memory will accumulate across runs/methods.")
         for method_code in args.methods:
-            print(f"\n===== Method {method_code} ({METHOD_SPECS[method_code]['enum']}) =====")
-            all_runs = []
-            for run in range(args.n_runs):
-                print(f"Run {run + 1}/{args.n_runs}")
-                result = run_one_experiment(
-                    method_code=method_code,
-                    run_idx_zero_based=run,
-                    epochs=args.epochs,
-                    n_cells=args.n_cells,
-                    mean_shape_factors=args.mean_shape_factors,
-                    std_shape_factors=args.std_shape_factors,
-                    save_every_epoch_tables=args.save_tables,
-                )
-                all_runs.append(result)
-            save_method_aggregates(method_code, all_runs)
+            run_method_isolated(
+                method_code=method_code,
+                n_runs=args.n_runs,
+                epochs=args.epochs,
+                n_cells=args.n_cells,
+                mean_shape_factors=args.mean_shape_factors,
+                std_shape_factors=args.std_shape_factors,
+                save_tables=args.save_tables,
+                in_process=args.in_process,
+            )
 
     # Filter comparison-run indices to those that actually exist / were requested.
     available_runs = list(range(1, args.n_runs + 1)) if not args.plots_only else list(range(1, 11))
