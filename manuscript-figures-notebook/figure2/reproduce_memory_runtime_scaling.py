@@ -89,6 +89,16 @@ OUTPUT_ROOT = SCRIPT_DIR / "outputs_scaling"
 PLOTS_DIR = OUTPUT_ROOT / "paper_plots"
 DETAILED_DATA_FILE = "scaling_detailed_raw_data.pkl"
 
+
+def configure_output_root(path: str | Path) -> None:
+    """Set OUTPUT_ROOT / PLOTS_DIR (relative paths are under SCRIPT_DIR)."""
+    global OUTPUT_ROOT, PLOTS_DIR
+    root = Path(path)
+    if not root.is_absolute():
+        root = SCRIPT_DIR / root
+    OUTPUT_ROOT = root.resolve()
+    PLOTS_DIR = OUTPUT_ROOT / "paper_plots"
+
 METHOD_SPECS = {
     "AD": {
         "label": "Automatic Differentiation",
@@ -190,20 +200,22 @@ def run_single_experiment(
     epochs: int,
     mean_shape_factors: float,
     std_shape_factors: float,
+    seed_offset: int = 0,
 ) -> dict:
     """Run one bilevel scaling trial and return its raw record."""
     width = height = math.sqrt(n_cells)
     energy = make_shape_factor_energy(width, height)
 
+    # Seeds: (run_id + seed_offset)*333, +1, +2  (offset shifts away from prior campaigns)
+    seed_index = run_id + seed_offset
     print(
         f"\n--- [{method_code}] run {run_id + 1} (n_cells={n_cells}) "
-        f"[pid={os.getpid()}] ---"
+        f"seed_index={seed_index} [pid={os.getpid()}] ---"
     )
 
-    # Seeds: i*333, i*333+1, i*333+2
-    key_geom = run_id * 333
-    key_params = jax.random.PRNGKey(run_id * 333 + 1)
-    key_target = jax.random.PRNGKey(run_id * 333 + 2)
+    key_geom = seed_index * 333
+    key_params = jax.random.PRNGKey(seed_index * 333 + 1)
+    key_target = jax.random.PRNGKey(seed_index * 333 + 2)
 
     opt = make_optimizer(method_code)
     opt.loss_function_inner = energy
@@ -266,6 +278,8 @@ def run_single_experiment(
     return {
         "n_cells": n_cells,
         "run_id": run_id,
+        "seed_offset": seed_offset,
+        "seed_index": seed_index,
         "peak_mem_mb_all_epochs": float(np.max(uss_arr)),
         "peak_mem_mb_scaling": peak_scaling,
         "uss_history_mb": uss_arr,
@@ -442,6 +456,7 @@ def launch_isolated_run(
     epochs: int,
     mean_shape_factors: float,
     std_shape_factors: float,
+    seed_offset: int = 0,
 ) -> None:
     """Spawn a fresh Python process for one (method, n_cells, run_id)."""
     cmd = [
@@ -462,6 +477,10 @@ def launch_isolated_run(
         str(mean_shape_factors),
         "--std-shape-factors",
         str(std_shape_factors),
+        "--seed-offset",
+        str(seed_offset),
+        "--output-root",
+        str(OUTPUT_ROOT),
     ]
     print(f"\n>>> subprocess: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
@@ -475,6 +494,7 @@ def run_method_scaling_isolated(
     mean_shape_factors: float,
     std_shape_factors: float,
     in_process: bool = False,
+    seed_offset: int = 0,
 ) -> list[dict]:
     """Run all (n_cells, run) trials for one method, then aggregate."""
     mdir = method_dir(method_code)
@@ -491,6 +511,7 @@ def run_method_scaling_isolated(
                     epochs=epochs,
                     mean_shape_factors=mean_shape_factors,
                     std_shape_factors=std_shape_factors,
+                    seed_offset=seed_offset,
                 )
                 save_run_record(method_code, record)
             else:
@@ -501,6 +522,7 @@ def run_method_scaling_isolated(
                     epochs=epochs,
                     mean_shape_factors=mean_shape_factors,
                     std_shape_factors=std_shape_factors,
+                    seed_offset=seed_offset,
                 )
 
     return aggregate_method_outputs(method_code, n_cells_list, n_runs, epochs)
@@ -673,16 +695,34 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run all trials in one process (debug only; USS will accumulate).",
     )
+    parser.add_argument(
+        "--output-root",
+        type=str,
+        default=None,
+        help="Output directory (default: outputs_scaling next to this script).",
+    )
+    parser.add_argument(
+        "--seed-offset",
+        type=int,
+        default=0,
+        help=(
+            "Added to run_id before building RNG seeds (seed_index = run_id + offset). "
+            "Use a positive offset to draw different ICs than a prior campaign."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.output_root is not None:
+        configure_output_root(args.output_root)
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print("VertAX devices:", jax.devices())
     print(f"Output root: {OUTPUT_ROOT}")
+    print(f"Seed offset: {args.seed_offset}")
 
     # --- Worker: one isolated run in this process, then exit ---
     if args.worker:
@@ -702,6 +742,7 @@ def main() -> None:
             epochs=args.epochs,
             mean_shape_factors=args.mean_shape_factors,
             std_shape_factors=args.std_shape_factors,
+            seed_offset=args.seed_offset,
         )
         save_run_record(method_code, record)
         return
@@ -719,6 +760,7 @@ def main() -> None:
                 mean_shape_factors=args.mean_shape_factors,
                 std_shape_factors=args.std_shape_factors,
                 in_process=args.in_process,
+                seed_offset=args.seed_offset,
             )
 
     print("\n=== Generating paper scaling plots ===")
