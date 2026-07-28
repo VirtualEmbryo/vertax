@@ -124,7 +124,7 @@ METHOD_SPECS = {
 # Runs used for multi-method comparison plots in the paper (1-based indices).
 COMPARISON_RUN_INDICES = [1, 2, 3, 4, 5]
 # Run used for the shape-factor scatter panels (1-based).
-SCATTER_RUN_INDEX = 2
+SCATTER_RUN_INDEX = 1
 
 
 # ---------------------------------------------------------------------------
