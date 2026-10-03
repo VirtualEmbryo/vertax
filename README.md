@@ -186,7 +186,7 @@ See the [`examples/`](examples) folder for in-depth examples:
 For **tension inference specifically** — which settings matter, which metric to report, and which
 conclusions from a run are trustworthy — see
 [`docs/tension_inference_guide.md`](docs/tension_inference_guide.md). It collects the practical
-results of the 2026-08 analysis campaign, including the mean-tension gauge (which is **off by
+results of the 2026-08 analysis campaign, including the mean-tension normalization constraint (which is **off by
 default** and must be set explicitly) and why truncating the inner solve buys efficiency rather than
 accuracy.
 
@@ -195,6 +195,91 @@ accuracy.
 ## API Reference
 
 See the [documentation](https://html-preview.github.io/?url=https://github.com/VirtualEmbryo/VertAX/blob/main/docs/vertax.html).
+
+---
+
+## Further modules
+
+* **Tracing a segmentation into a vertex mesh** (`vertax.trace`). Turns a label mask, including a raw
+  crop with unsegmented margin, into a straight-edge mesh and reports which vertices are free or clamped.
+
+  ```python
+  import tifffile
+  from vertax import trace_mask_closed
+
+  mesh = trace_mask_closed(tifffile.imread("tests/trace_fixture_demo_003_pos2_mask.tif"))
+  print(mesh.n_verts, int(mesh.free.sum()))   # vertices, and those with a complete force balance
+  ```
+
+* **Clamped-rim force balance on cropped tissues** (`vertax.clamped`). Relaxes the free vertices of a
+  traced patch with the clamped ones held at their observed positions, and reports the residual over
+  free degrees of freedom only. Requires `float64`.
+
+  ```python
+  import jax.numpy as jnp
+  from jax.experimental import enable_x64
+  from vertax.clamped import load_mesh, patch_geometry, relax
+
+  with enable_x64():
+      patch = load_mesh("tests/fixtures/clamped_patch_demo_003_pos2.npz")
+      gamma = jnp.ones(len(patch.EA))                      # one tension per cell-cell edge
+
+      def E(x, K):
+          A, P, L = patch_geometry(x, patch)
+          return 0.5 * K * jnp.sum((A - 1.0) ** 2) + jnp.sum(gamma * L)
+
+      out = relax(E, patch, K=5.0)
+      print(out["r_eq"], out["min_area"])                  # residual; smallest signed area
+  ```
+
+* **Bulk shear rheometry and its inverse design** (`vertax.rheology`, `ShearRheologyOptimizer`).
+  Drives a periodic tissue with a cosine force mode, reads the compliance from the response, and
+  designs parameters against a target modulus. Requires `float64`.
+
+  ```python
+  import math
+  import jax.numpy as jnp
+  from jax.experimental import enable_x64
+  from vertax import PbcMesh
+  from vertax.energy import energy_shape_factor_homo
+  from vertax.rheology import make_drive_energy, make_shear_mode, mode_amplitude
+
+  side = math.sqrt(20.0)
+  with enable_x64():
+      mesh = PbcMesh.from_random_seeds(nb_seeds=20, width=side, height=side, random_key=231)
+      verts = jnp.asarray(mesh.vertices, dtype=jnp.float64)
+      mode = make_shear_mode(verts, side, side, n=1)       # built from the undriven reference state
+
+      def energy(v, h, f, _vp, _hp, fp):
+          return energy_shape_factor_homo(v, h, f, side, side, jnp.atleast_1d(jnp.asarray(fp)))
+
+      driven = make_drive_energy(energy, mode, 0.02)       # use as `loss_function_inner`
+      print(mode_amplitude(verts, mode))                   # response amplitude (0 at the reference)
+  ```
+
+* **Image-based cost** (`cost_dmic`, `make_cost_dmic`, `render_interface_image`). Renders the mesh
+  interfaces as a blurred image and compares it with an observed image, so the outer loss needs no
+  vertex correspondence.
+
+  ```python
+  import jax.numpy as jnp
+  from jax.experimental import enable_x64
+  from vertax import PbcMesh
+  from vertax.cost import make_cost_dmic, render_interface_image
+
+  with enable_x64():
+      mesh = PbcMesh.load_mesh("tests/fixtures/mesh_1008.npz")
+      image = render_interface_image(jnp.asarray(mesh.vertices, jnp.float64), jnp.asarray(mesh.edges),
+                                     float(mesh.width), float(mesh.height), 64, 0.3)
+      loss_outer = make_cost_dmic(sigma_psf=0.3)           # for `loss_function_outer`
+  ```
+
+### Running the tests
+
+```sh
+uv run pytest              # default suite; long-running tests are deselected
+uv run pytest -m long      # the long-running tests only (tens of minutes, several GB of RAM)
+```
 
 ---
 
