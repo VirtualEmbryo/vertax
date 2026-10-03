@@ -148,6 +148,8 @@ addopts = [
   "--strict-markers",
   "--strict-config",
   "--ignore=tests/other_tests",
+  # Long-running tests are deselected by default; run them with `pytest -m long` (see README).
+  "-m", "not long",
 ]
 xfail_strict = true
 filterwarnings = [
@@ -168,12 +170,13 @@ filterwarnings = [
 ]
 log_cli_level = "INFO"
 testpaths = ["tests"]
-markers = ["long: marks tests as slow (deselect with '-m \"not long\"')"]
+markers = ["long: long-running or memory-hungry test, deselected by default (run with '-m long')"]
 
 [dependency-groups]
 dev = [
     "jupyterlab>=4.5.7",
     "pdoc>=16.0.0",
     "pytest>=8.4.2",
+    "pytest-timeout",
     "scalene>=1.5.55",
 ]
