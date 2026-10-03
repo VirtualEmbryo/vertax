@@ -500,6 +500,7 @@ def trace_mask_closed(mask: NDArray, stem: str = "", rim_tol: float = 2.0,
 
 # ---------------------------------------------------------------------------------------
 def vertex_degrees(m: TracedMesh) -> NDArray:
+    """Number of edges incident to each vertex of a traced mesh, as an integer array of length ``m.n_verts``."""
     d = np.zeros(m.n_verts, dtype=np.int64)
     for a, b in m.edges.tolist():
         d[a] += 1
@@ -530,6 +531,10 @@ def normalized(m: TracedMesh, a_ref: float) -> NDArray:
 
 
 def interior_area_ref(m: TracedMesh) -> float:
+    """Reference cell area: the mean area of the interior (non-rim) faces of a traced mesh.
+
+    Falls back to the mean over all faces when the mesh has no interior face.
+    """
     A = m.face_areas()
     sel = m.face_is_interior
     if sel.sum() == 0:

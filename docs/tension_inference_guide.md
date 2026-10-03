@@ -32,7 +32,7 @@ target = PbcMesh.from_random_seeds(nb_seeds=N_CELLS, width=WIDTH, height=HEIGHT,
 #   (vertices, edges, faces, vertices_params, edges_params, faces_params)    -- 6 arguments.
 # So the factory's output CANNOT be assigned to `loss_function_inner` directly: it raises
 # `TypeError: ... missing 1 required positional argument: 'face_params'`.
-# Wrap it, closing over the box size. This is what every analysis harness in `analysis/` does.
+# Wrap it, closing over the box size. This is what the tests and examples do.
 _E2 = make_energy_line_tensions(K_AREAS)
 
 def energy_inner(vertTable, heTable, faceTable, vert_params, he_params, face_params):
@@ -58,22 +58,23 @@ bop.do_n_bilevel_optimization(nb_epochs=500, mesh=mesh)
 
 Two defaults worth knowing:
 
-* **`mean_tension_gauge` defaults to `None`, i.e. off.** Leaving it off makes tension error
+* **`mean_tension_gauge` (the mean-tension normalization constraint) defaults to `None`, i.e. off.** Leaving it off makes tension error
   meaningless (section 2).
 * **`ep_variant` defaults to `EPVariant.CENTERED`**, which is correct. `ONE_SIDED` exists for
   comparison; one-sided EP gradients bias *both* accuracy metrics, not only the error norm.
 
 ---
 
-## 2. Fix the gauge, and know that it is an assumption
+## 2. Fix the mean tension, and know that it is an assumption
 
-**Tensions are only determined up to an additive constant** by geometry alone. In a periodic mesh the
+**The overall tension level is nearly unobservable** from geometry alone: the uniform direction is the
+least observable one by a wide margin (it is near-null, not exactly null). In a periodic mesh the
 mechanical Hessian additionally has an exact double-zero eigenvalue from the two global translational
 symmetries. Without pinning the overall level, the recovered tension vector wanders along the
 undetermined direction and the error norm is dominated by that drift — it inflated `err/spread` by
 roughly 25x on the runs measured here.
 
-VertAX fixes it by **post-step additive projection**, applied after every outer step for every
+VertAX fixes it with a **mean-tension normalization constraint**, a post-step additive projection, applied after every outer step for every
 gradient estimator:
 
 ```
@@ -93,7 +94,7 @@ injects the true value of one direction out of 60 — and it is the *worst-condi
 one that would need about 100x more data to determine than the best-conditioned one. It is
 legitimate and standard, but it must be stated.
 
-**On real data there is no ground-truth mean.** Fixing the gauge to 1 is then not available, so any
+**On real data there is no ground-truth mean.** Fixing the mean to 1 is then not available, so any
 error metric must be **centered**: subtract the mean from both the recovered and the reference
 tensions before comparing. Reporting an uncentered error against real images silently credits the
 method with an assumption it was not given.
@@ -216,6 +217,6 @@ once it is resolved, which is roughly flat in distance.
 
 * `docs/technical/CODE_CORRECTIONS_2026-08-09.md` (in the manuscript project, **not** in this
   repository) — the energy-convention corrections, why `K_areas` became explicit, and the removal of
-  the IAS cost family.
-* `analysis/KNOWN_LIMITATIONS.md` — current limitations, branch-specific.
-* `analysis/out/A8_REPORT.md` — the measured numbers behind this guide.
+  the former topology-cost family.
+* The measured numbers behind this guide and the current limitations are kept with the manuscript
+  analysis, which is not part of this repository snapshot.
