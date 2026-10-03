@@ -468,13 +468,22 @@ class BoundedMesh(Mesh):
         dirpath.mkdir(parents=True, exist_ok=True)
 
         mesh = cls._create()
+        # Index tables are WRITTEN by `np.savetxt` in float notation ('0.00...e+00'), so reading
+        # them with `dtype=np.int64` makes numpy parse an integer via a float -- a
+        # DeprecationWarning that this project's `filterwarnings = ["error"]` turns into a hard
+        # error, which is why this loader had no test. Read as float and cast, which also keeps
+        # every file written by earlier versions readable.
         mesh.vertices = jnp.array(np.loadtxt(dirpath / vertices_filename, dtype=np.float64))
         mesh.angles = jnp.array(np.loadtxt(dirpath / angles_filename, dtype=np.float64))
-        mesh.edges = jnp.array(np.loadtxt(dirpath / edges_filename, dtype=np.int64))
-        mesh.faces = jnp.array(np.loadtxt(dirpath / faces_filename, dtype=np.int64))
+        mesh.edges = jnp.array(np.loadtxt(dirpath / edges_filename, dtype=np.float64).astype(np.int64))
+        mesh.faces = jnp.array(np.loadtxt(dirpath / faces_filename, dtype=np.float64).astype(np.int64))
+        # `edges_params` and `faces_params` are PHYSICAL PARAMETERS (tensions, target areas,
+        # shape factors), never indices, so they must be read as float: reading them with
+        # `dtype=np.int64` silently truncates -- a tension field of mean 1 and spread 0.1
+        # round-trips to all-ones, destroying the whole signal. See tests/test_mesh_txt_roundtrip.py.
         mesh.vertices_params = jnp.array(np.loadtxt(dirpath / vertices_params_filename, dtype=np.float64))
-        mesh.edges_params = jnp.array(np.loadtxt(dirpath / edges_params_filename, dtype=np.int64))
-        mesh.faces_params = jnp.array(np.loadtxt(dirpath / faces_params_filename, dtype=np.int64))
+        mesh.edges_params = jnp.array(np.loadtxt(dirpath / edges_params_filename, dtype=np.float64))
+        mesh.faces_params = jnp.array(np.loadtxt(dirpath / faces_params_filename, dtype=np.float64))
         with (dirpath / constants_filename).open("r") as f:
             numbers = f.readline().split()
             mesh.width = float(numbers[0])

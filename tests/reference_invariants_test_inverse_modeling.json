@@ -1,0 +1,17 @@
+{
+  "generated_on": {
+    "platform": "macOS-14.8.4-arm64-arm-64bit",
+    "python": "3.12.13",
+    "jax": "0.4.34",
+    "x64": true
+  },
+  "note": "Physical invariants only. Raw vertex coordinates are deliberately NOT stored: they are not comparable across periodic representatives, vertex relabelling by the T1 swap repair, or machines. See the module docstring.",
+  "invariants": {
+    "grad_norm_E": 2.593946557727646,
+    "outer_cost_v2v": 0.004280471242964268,
+    "inner_energy": 97.20231292785807,
+    "d_topo": 0.0,
+    "err_over_spread": 1.3403873493373877,
+    "pearson": 0.04124199199386812
+  }
+}

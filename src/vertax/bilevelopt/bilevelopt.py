@@ -9,15 +9,58 @@ from time import perf_counter
 from typing import Any
 
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import optax
 import pandas
 from jax import Array, lax
 
 from vertax.meshes.mesh import Mesh
 from vertax.meshes.plot import plot_mesh, save_simple_xy_graph
-from vertax.method_enum import BilevelOptimizationMethod
+from vertax.method_enum import BilevelOptimizationMethod, EPVariant
 
 __all__ = ["_BilevelOptimizer"]
+
+
+class _Unset:
+    """Sentinel for "the caller never assigned this attribute".
+
+    Distinguishing "unset" from "set to the default value" is the whole point: a silent default is
+    indistinguishable from a deliberate choice in a results file, and that is how an entire EP study
+    came to run at beta=0.01 while its pre-registration said 0.5179.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<unset>"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+_UNSET = _Unset()
+
+BETA_DEFAULT = 0.01
+"""Value `beta` resolves to when an EP run leaves it unset. Applied with a warning, never silently."""
+
+# Which optional attributes each bilevel method actually CONSUMES.
+#
+# Kept here, next to the guard that reads it, and cross-referenced from the dispatch `match`
+# statements in `pbcbop.py` / `boundedbop.py`: if you add a branch there that starts or stops
+# honouring one of these, update this table in the same commit.
+#
+# The recurring defect this exists to catch: two runs differ in a parameter nobody recognised as
+# differing, because one code path reads it and another silently drops it. Four instances found in
+# this project -- the mean-tension gauge (honoured for EP only), `beta` (set by one harness, unset by
+# another), `persist_outer_state` (honoured for EP only), and `ep_variant`.
+#
+# LIMITATION, stated explicitly so this table is not mistaken for full coverage: it can only detect
+# set-but-ignored and honoured-but-unset. It CANNOT detect an attribute that is set identically in
+# two arms and honoured in both, yet means different things -- the `nesterov=True` case, where the
+# same nominal `learning_rate` denotes a 1.4737x larger realised step under a per-epoch state reset.
+# That class needs a functional probe of the realised step (see
+# `tests/test_nadam_step_factor.py`), not a bookkeeping check.
+_EP_ONLY = ("persist_outer_state", "ep_variant", "beta")
 
 
 class _BilevelOptimizer:
@@ -40,6 +83,79 @@ class _BilevelOptimizer:
         """Define your inner loss function."""
         self.loss_function_outer: Callable | None = None
         """Define your outer loss function."""
+        self.params_regularizer: Callable | None = None
+        """Optional regularization term on the parameters themselves, as
+        `(vert_params, he_params, face_params) -> scalar`.
+
+        Its gradient is added to the outer gradients *before* the outer solver's update, so the
+        term is optimized jointly with the outer loss rather than applied as a separate step.
+        This is the only place such a term can act: `loss_function_outer` is called without the
+        parameters, and a parameter-only term added to `loss_function_inner` cancels exactly in
+        equilibrium propagation's `(grad_nudged - grad_free)` difference. Defaults to None.
+
+        Honoured by ALL estimator paths.
+
+        CAUTION: a parameter-space penalty is mis-scaled against a *filtered* hypergradient. If the
+        inner solve is truncated or preconditioned, the data gradient carries the filter factor and
+        `grad R(theta)` does not, so the effective weight scales as 1/f_k. Do not use this to fix a
+        gauge -- use `mean_tension_gauge`. See `outer_optimization`."""
+        self.ep_variant: EPVariant = EPVariant.CENTERED
+        """Which EP finite-difference form to use (EQUILIBRIUM_PROPAGATION only).
+        CENTERED (default) is second-order in beta; ONE_SIDED is first-order and is
+        provided for ablation. See :class:`vertax.method_enum.EPVariant`."""
+        self.params_normalization: dict[str, float] | None = None
+        """Mean-value normalization constraints, per parameter array, or None for no constraint.
+
+        A dict from parameter-array name to the target mean, e.g.
+        ``{"faces_params": 4.1}`` for E1 shape factors or ``{"edges_params": 1.0}`` for E2 line
+        tensions. Applied as an additive **projection** after every outer step:
+        ``p <- p - (mean(p) - target)``. Valid keys are ``vertices_params``, ``edges_params`` and
+        ``faces_params``. Off by default.
+
+        **This is a normalization CONSTRAINT, not a gauge**, and the distinction is load-bearing:
+        a gauge transformation leaves the physics invariant; a uniform
+        shift of these parameters does **not**. For E2 tensions, ``M 1 != 0``: measured on the
+        benchmark, ``||M.1|| = 1.40-1.72`` against ``||M.Lambda|| = 1.04-1.55``, so a shift of size
+        ``std(Lambda)`` produces 10-14% of the tension force. For E1 shape factors the same holds --
+        a uniform increase in ``p0`` makes every cell prefer a longer perimeter, which moves the
+        equilibrium. The uniform direction is **near**-null, not null: least observable by a wide
+        margin, which is precisely why it must be supplied from outside the data.
+
+        **It is an ASSUMPTION, not bookkeeping.** Fixing the mean injects the true value of one
+        direction -- the one that would need ~100x more data to determine than the best-conditioned
+        one -- and it is known only because the benchmark was constructed with that mean. Legitimate
+        and standard, but it must be stated. **On real images there is no ground-truth mean, so the
+        corresponding error metric must be CENTRED** (subtract the mean from both the recovered and
+        the reference field) rather than normalised against an assumed level.
+
+        The additive convention is deliberate. The force-inference literature normalises
+        *multiplicatively* (``p -> a p``), which for E2 is equivalent to ``K -> K/a`` and so trades
+        against the area stiffness instead of being near-invariant. State which convention is used;
+        a reader from that literature will assume the other one.
+
+        Generalises `mean_tension_gauge`, which reached ``edges_params`` only and is why E1's
+        ``faces_params`` were never constrained. Setting both is an
+        error.
+        """
+        self.mean_tension_gauge: float | None = None
+        """Target for the mean line tension, fixed by parameter renormalisation after every outer
+        step (`Lambda <- Lambda - (mean(Lambda) - target)`), or None to leave the gauge free.
+
+        The additive freedom of E2 line tensions is the least observable direction in the problem
+        and carries no information, so it is fixed by convention rather than inferred. Set to 1.0
+        for E2 drivers. Leave None for E1 (per-cell shape factors have no analogous freedom) and
+        for bounded inverse-design runs. Prefer this to a `params_regularizer` penalty: see
+        `outer_optimization` for why a penalty is mis-scaled against a filtered hypergradient."""
+        self.persist_outer_state: bool = False
+        """If True, the outer optimizer's moment/accumulator state is carried across bilevel
+        epochs instead of being re-initialised at every call.  Only honoured by the
+        EQUILIBRIUM_PROPAGATION method in ``PbcBilevelOptimizer``; all other methods behave
+        identically regardless of this flag.  Defaults to False (current behaviour)."""
+        self._outer_opt_state: object = None
+        """Cached outer optimizer state.  Initialised on the first call when
+        ``persist_outer_state=True``; reset to None whenever ``persist_outer_state`` is set
+        to False.  Not intended to be set directly by user code."""
+
         self.custom_metrics: dict[str, tuple[Callable[[Any, Any], float], list[float], list[float]]] = {}
         """Define custom metrics that can be saved during optimization.
         The function must take two arguments : a mesh and a bilevel optimizer ; and return a float."""
@@ -75,8 +191,14 @@ class _BilevelOptimizer:
         # Those attributes are not always used (depends on the bilevel_optimization_method)
         self.image_target: Array = jnp.array([])
         """Image target if any."""
-        self.beta = 0.01
-        """β parameter used for Equilibrium Propagation."""
+        self.beta: Any = _UNSET
+        """β parameter used for Equilibrium Propagation.
+
+        Defaults to the sentinel `_UNSET`, not to a number, so that an EP run which never assigns it
+        produces a WARNING instead of silently adopting a default: an implicit default can differ
+        from the intended value by a large factor with nothing reporting the discrepancy.
+        Resolved to `BETA_DEFAULT` by `_check_attribute_dispatch`
+        before any dispatch, so downstream code always sees a float."""
 
     def _set_update_T1_func(self, b: bool) -> None:  # noqa: N802
         """Set the _update_T1_func callable with respect to whether it is needed or not."""
@@ -195,12 +317,67 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
 
             # Optional permutation test if T1 happened.
             if self.vertices_target is not None and self.vertices_target.size > 0 and self.update_T1:
+                _reject_bounded_t1_repair(mesh)
                 perm = _build_t1_repair_perm(
                     mesh.vertices, self.vertices_target, old_edges, mesh.edges, mesh.width, mesh.height
                 )
                 mesh.vertices, mesh.edges = _apply_perm_to_state(perm, mesh.vertices, mesh.edges)
 
             return loss_history
+
+    def _check_attribute_dispatch(self) -> None:
+        """Fail loudly when an attribute is set but the selected method will ignore it.
+
+        Runs once per optimizer instance (`outer_optimization` is called every epoch; this must not
+        warn 350 times). Two directions are checked:
+
+        * **set-but-ignored -> raise.** Assigning `persist_outer_state=True` on a non-EP method is a
+          no-op: only the EQUILIBRIUM_PROPAGATION branch threads the outer optimizer state
+          (`opt.py:outer_eq_prop_with_state`; there is no AD/ID equivalent). Silently ignoring it
+          turns an intended reset-vs-persistent A/B into a comparison of two identical arms, which
+          reports a false null rather than an error.
+        * **honoured-but-unset -> warn and resolve.** An EP run that never assigns `beta` gets
+          `BETA_DEFAULT` with a warning, so "the default was used" appears in the log instead of
+          being indistinguishable from a deliberate choice.
+
+        `ep_variant` set to a non-default on a non-EP method warns rather than raises: it is
+        genuinely inert there and some harnesses set it uniformly across estimators.
+
+        See the `_EP_ONLY` table above for what this can and (importantly) cannot catch.
+        """
+        if getattr(self, "_dispatch_checked", False):
+            return
+        self._dispatch_checked = True
+
+        is_ep = self._bilevel_optimization_method == BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION
+
+        if not is_ep and self.persist_outer_state:
+            msg = (
+                f"persist_outer_state=True is IGNORED by "
+                f"{self._bilevel_optimization_method.name}: only EQUILIBRIUM_PROPAGATION threads "
+                f"the outer optimizer state across epochs, so this run would be identical to "
+                f"persist_outer_state=False and any A/B against it would compare two identical "
+                f"arms. Either use EQUILIBRIUM_PROPAGATION, or -- if the intent is a scale-aware "
+                f"outer optimizer rather than persistence -- use a stateless optimizer such as "
+                f"optax.sgd, for which the per-epoch reset is a no-op by construction."
+            )
+            raise ValueError(msg)
+
+        if not is_ep and self.ep_variant is not EPVariant.CENTERED:
+            print(
+                f"[vertax] WARNING: ep_variant={self.ep_variant.name} is ignored by "
+                f"{self._bilevel_optimization_method.name} (EP-only attribute).",
+                file=sys.stderr,
+            )
+
+        if is_ep and self.beta is _UNSET:
+            print(
+                f"[vertax] WARNING: beta was never set; EQUILIBRIUM_PROPAGATION is using the "
+                f"default beta={BETA_DEFAULT}. Set it explicitly and record it with your results.",
+                file=sys.stderr,
+            )
+        if self.beta is _UNSET:
+            self.beta = BETA_DEFAULT
 
     def outer_optimization(
         self,
@@ -220,12 +397,68 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
             only_on_faces (None | list[int] = None): Consider only a subset of faces for the loss function.
                                                         All faces if None.
         """
+        self._check_attribute_dispatch()
+
         # To be defined by child classes
         if self._outer_opt_func is None:
             msg = "The outer function was not initialized."
             raise AttributeError(msg)
         else:
             self._outer_opt_func(mesh, *self._selection_to_jax_arrays(only_on_vertices, only_on_edges, only_on_faces))
+
+        # Mean-value normalization by PARAMETER RENORMALISATION, applied after the outer step, for
+        # every estimator path (this method is the single point they all pass through).
+        #
+        # Why renormalisation and not a penalty, and not a gradient projection:
+        #
+        # * A penalty `w*(mean(Lambda)-target)**2` is silently MIS-SCALED whenever the
+        #   hypergradient is filtered or preconditioned. Truncating the inner solve at k steps
+        #   multiplies the data gradient by the Landweber factor f_k, but `grad R(theta)` is a
+        #   direct parameter-space gradient and is NOT filtered, so their ratio scales as 1/f_k --
+        #   with no error and no warning, this can substantially degrade recovery quality at small
+        #   k while leaving large k untouched. This is general to bilevel optimisation with
+        #   truncated or preconditioned inner solves, not specific to VertAX. It also explains why
+        #   a naive `w=1` penalty works for EP specifically: EP's hypergradient is unfiltered, so
+        #   no rescaling correction is needed there -- but not for the other paths, whose
+        #   hypergradient is filtered by the truncated inner solve.
+        # * Projecting the GRADIENT does not fix the mean either, because Adam rescales
+        #   per-coordinate (g/sqrt(v)) and, with the per-epoch state reset, reduces to
+        #   -eta*sign(g); neither operation preserves a mean-zero update.
+        #
+        # Subtracting a constant is exact, optimiser-agnostic, and preserves twin symmetry
+        # (both half-edges of a pair shift identically), so it cannot introduce an antisymmetric
+        # component. Off by default: for E2, fixing `mean(Lambda)` is a normalization CONSTRAINT
+        # and an ASSUMPTION supplied from outside the data -- a uniform shift DOES change the
+        # force (`M 1 != 0`), so this is not a physically-free direction, merely the least
+        # observable one. E1 shape factors are per-cell and observable, with no analogous
+        # assumption needed.
+        for name, target in self._resolve_param_normalization().items():
+            arr = jnp.asarray(getattr(mesh, name))
+            setattr(mesh, name, arr - (jnp.mean(arr) - target))
+
+    _PARAM_ARRAYS = ("vertices_params", "edges_params", "faces_params")
+
+    def _resolve_param_normalization(self) -> dict[str, float]:
+        """Merge `params_normalization` and the older `mean_tension_gauge` into one mapping.
+
+        `mean_tension_gauge` is kept working as an alias because every recorded E2 result was
+        produced with it; it is exactly `{"edges_params": value}`. Setting both is rejected rather
+        than silently resolved, because the two would disagree about `edges_params` and the loser
+        would be decided by dict ordering.
+        """
+        spec = dict(self.params_normalization or {})
+        if self.mean_tension_gauge is not None:
+            if "edges_params" in spec:
+                msg = ("Set either mean_tension_gauge or params_normalization['edges_params'], "
+                       "not both -- they would disagree about the same array.")
+                raise ValueError(msg)
+            spec["edges_params"] = self.mean_tension_gauge
+        bad = set(spec) - set(self._PARAM_ARRAYS)
+        if bad:
+            msg = (f"params_normalization keys must be among {self._PARAM_ARRAYS}; got "
+                   f"{sorted(bad)}.")
+            raise ValueError(msg)
+        return spec
 
     def bilevel_optimization(
         self,
@@ -303,7 +536,8 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
         epoch_data = []
         if save_plotmesh_every > 0:
             mesh_save_plot_folder.mkdir(parents=True, exist_ok=True)
-            plot_mesh(mesh, show=False, save=True, save_path=str(mesh_save_plot_folder / "mesh_epoch_0.png"))
+            fig, _ = plot_mesh(mesh, show=False, save=True, save_path=str(mesh_save_plot_folder / "mesh_epoch_0.png"))
+            plt.close(fig)
         if save_mesh_data_every > 0:
             mesh_save_data_folder.mkdir(parents=True, exist_ok=True)
             mesh.save_mesh(path=str(mesh_save_data_folder / "mesh_epoch_0.npz"))
@@ -361,7 +595,10 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
             delta_time = t_end_of_epoch - t_begin_of_epoch
 
             if save_plotmesh_every > 0 and epoch % save_plotmesh_every == 0:
-                plot_mesh(mesh, show=False, save=True, save_path=str(mesh_save_plot_folder / f"mesh_epoch_{epoch}.png"))
+                fig, _ = plot_mesh(
+                    mesh, show=False, save=True, save_path=str(mesh_save_plot_folder / f"mesh_epoch_{epoch}.png")
+                )
+                plt.close(fig)
             if save_mesh_data_every > 0 and epoch % save_mesh_data_every == 0:
                 mesh.save_mesh(path=str(mesh_save_data_folder / f"mesh_epoch_{epoch}.npz"))
 
@@ -477,6 +714,47 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
         if only_on_faces is not None:
             selected_faces = jnp.array(only_on_faces)
         return selected_vertices, selected_edges, selected_faces
+
+
+def _reject_bounded_t1_repair(mesh: Any) -> None:  # noqa: ANN401
+    """Refuse to run the periodic T1 swap repair on a bounded mesh.
+
+    ``_BilevelOptimizer.inner_optimization`` is shared by both mesh types and
+    ``BoundedBilevelOptimizer`` does not override it, so a bounded mesh with a registered vertex
+    target would silently execute the *periodic* repair. That repair is wrong for bounded meshes
+    in two independent ways:
+
+    * it detects T1 events as ``heTable[:, 5]`` changing. Column 5 is the **face index** for a
+      periodic mesh, but for a bounded mesh it is a **boundary-edge source-vertex index** (see
+      ``geo.get_chord_length``); the bounded face index lives in column 7. The detector therefore
+      keys on the wrong quantity entirely.
+    * it scores candidate swaps with ``_periodic_sq_dist``, i.e. the minimum over the nine
+      periodic images. Bounded meshes have no periodic images, and their ``width``/``height`` are
+      a bounding box rather than a period.
+
+    This is currently unreachable -- no bounded run registers ``vertices_target``, because bounded
+    work is inverse *design* (elongation, salt-and-pepper fates), which has no target mesh to match
+    and hence no vertex index-correspondence problem for the repair to solve. This guard exists so
+    that the first run which does register one fails loudly instead of returning a wrong answer.
+
+    The fix (not implemented) is to dispatch on mesh type: column 7 plus a plain squared distance
+    for bounded, column 5 plus ``geo.min_image_sq_dist`` for periodic -- preferably one function
+    taking a mesh-type parameter rather than two copies.
+    """
+    from vertax.meshes.bounded_mesh import BoundedMesh
+
+    if isinstance(mesh, BoundedMesh):
+        msg = (
+            "The T1 swap repair is not implemented for bounded meshes, and the shared periodic "
+            "implementation is incorrect for them: it detects T1 events via heTable[:, 5], which "
+            "is the face index for a periodic mesh but a boundary-edge vertex index for a bounded "
+            "one (bounded stores the face index in column 7), and it scores swaps with periodic "
+            "minimum-image distances that a bounded mesh does not have. Refusing rather than "
+            "silently returning a wrong permutation. Either leave vertices_target unset (bounded "
+            "runs are inverse design and do not need it) or implement the mesh-type dispatch "
+            "described in the docstring of _reject_bounded_t1_repair."
+        )
+        raise NotImplementedError(msg)
 
 
 def _periodic_sq_dist(p: Array, q: Array, width: float, height: float) -> Array:

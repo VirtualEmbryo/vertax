@@ -14,7 +14,7 @@ from numpy.typing import ArrayLike
 from scipy.sparse.linalg import LinearOperator, minres
 
 from vertax.geo import update_pbc
-from vertax.method_enum import BilevelOptimizationMethod
+from vertax.method_enum import BilevelOptimizationMethod, EPVariant
 from vertax.topo import update_T1
 
 # Per-step cap on how far a single vertex may move during inner relaxation,
@@ -651,6 +651,7 @@ def outer_opt(
     selected_faces: Array | None,
     image_target: Array | None,
     update_t1_func: UpdateT1Func = update_T1,
+    params_regularizer: Callable | None = None,
 ) -> tuple[Array, Array, Array]:
     """Outer optimization for Automatic differentiation method."""
     grad_verts, grad_hes, grad_faces = grad(cost_ad, argnums=(5, 6, 7))(
@@ -678,6 +679,18 @@ def outer_opt(
         image_target,
         update_t1_func,
     )
+
+    # The mean-tension gauge (and any parameter-space regulariser) applies to EVERY estimator,
+    # not only EP. The total objective is C(x*(theta)) + R(theta), so
+    # grad_theta = hypergradient + grad R(theta). This is simpler than the EP case: there is no
+    # cancellation to work around, because R depends on theta alone.
+    if params_regularizer is not None:
+        reg_verts, reg_hes, reg_faces = grad(params_regularizer, argnums=(0, 1, 2))(
+            vert_params, he_params, face_params
+        )
+        grad_verts = grad_verts + reg_verts
+        grad_hes = grad_hes + reg_hes
+        grad_faces = grad_faces + reg_faces
 
     params = {"vert_params": vert_params, "he_params": he_params, "face_params": face_params}
     grads = {"vert_params": grad_verts, "he_params": grad_hes, "face_params": grad_faces}
@@ -896,7 +909,7 @@ def inner_eq_prop(
     return (vt_f, ht_f, ft_f), final_L_list
 
 
-def outer_eq_prop(
+def _compute_ep_grads(
     vertTable: Array,
     heTable: Array,
     faceTable: Array,
@@ -911,7 +924,6 @@ def outer_eq_prop(
     L_in: InnerLossFunction,
     L_out: OuterLossFunction,
     solver_inner: optax.GradientTransformation,
-    solver_outer: optax.GradientTransformation,
     min_dist_T1: float,
     iterations_max: int,
     tolerance: float,
@@ -922,8 +934,41 @@ def outer_eq_prop(
     image_target: Array | None,
     beta: float,
     update_t1_func: UpdateT1Func = update_T1,
-) -> tuple[Array, Array, Array]:
-    """Outer optimization for equilibrium propagation method."""
+    params_regularizer: Callable | None = None,
+    ep_variant: EPVariant = EPVariant.CENTERED,
+) -> tuple[dict[str, Array], dict[str, Array]]:
+    """Compute EP parameter gradients and return (params_dict, grads_dict).
+
+    This is the gradient-computation core shared by ``outer_eq_prop`` and
+    ``outer_eq_prop_with_state``.  It performs the free and nudged inner solves,
+    takes their difference, adds any ``params_regularizer`` gradient, and returns the
+    parameter and gradient dicts ready for an optax ``solver_outer.update`` call.
+
+    The estimator is selected by ``ep_variant`` (see :class:`EPVariant`):
+
+    * ``CENTERED`` (default, recommended) -- solve at ``-beta`` and ``+beta``, divide by
+      ``2*beta``. Second order: the leading O(beta) bias cancels, leaving O(beta**2).
+    * ``ONE_SIDED`` -- solve at ``0`` (true free equilibrium) and ``+beta``, divide by
+      ``beta``. First order: O(beta) bias. Provided for comparison/ablation only.
+
+    Convention note: ``beta`` here is the *half-span* -- perturbations are placed at
+    ``+/-beta``, i.e. a total span of ``2*beta``, with **no conversion factor**; no
+    factor of 2 applies anywhere.
+
+    Returns:
+        params: dict with keys ``vert_params``, ``he_params``, ``face_params``.
+        grads:  same keys, EP gradients (+ regularizer if provided).
+    """
+    ep_variant = EPVariant(ep_variant)
+    if ep_variant is EPVariant.CENTERED:
+        beta_free = -beta       # symmetric negative nudge
+        denominator = 2.0 * beta
+    else:  # EPVariant.ONE_SIDED
+        beta_free = 0.0         # true (unnudged) free equilibrium
+        denominator = beta
+    # The free solve and the free *gradient* must use the SAME beta_free, otherwise the
+    # estimator is an inconsistent hybrid -- e.g. a free solve at 0 paired with a
+    # 1/(2*beta) normalisation, i.e. neither centered nor one-sided.
     (vertTable_free, heTable_free, faceTable_free), _ = inner_eq_prop(
         vertTable,
         heTable,
@@ -943,7 +988,7 @@ def outer_eq_prop(
         selected_hes,
         selected_faces,
         image_target,
-        0,
+        beta_free,
         solver_inner,
         min_dist_T1,
         iterations_max,
@@ -952,6 +997,7 @@ def outer_eq_prop(
         update_t1_func,
     )
 
+    # Nudged solve: beta>0
     (vertTable_nudged, heTable_nudged, faceTable_nudged), _ = inner_eq_prop(
         vertTable,
         heTable,
@@ -1000,7 +1046,7 @@ def outer_eq_prop(
         selected_hes,
         selected_faces,
         image_target,
-        beta=-beta,
+        beta=beta_free,
     )
 
     grad_loss_ep_nudged_verts, grad_loss_ep_nudged_hes, grad_loss_ep_nudged_faces = grad_ep(
@@ -1024,12 +1070,76 @@ def outer_eq_prop(
         beta,
     )
 
-    grad_verts = (1.0 / (2 * beta)) * ((grad_loss_ep_nudged_verts) - (grad_loss_ep_free_verts))
-    grad_hes = (1.0 / (2 * beta)) * ((grad_loss_ep_nudged_hes) - (grad_loss_ep_free_hes))
-    grad_faces = (1.0 / (2 * beta)) * ((grad_loss_ep_nudged_faces) - (grad_loss_ep_free_faces))
+    grad_verts = (1.0 / denominator) * ((grad_loss_ep_nudged_verts) - (grad_loss_ep_free_verts))
+    grad_hes = (1.0 / denominator) * ((grad_loss_ep_nudged_hes) - (grad_loss_ep_free_hes))
+    grad_faces = (1.0 / denominator) * ((grad_loss_ep_nudged_faces) - (grad_loss_ep_free_faces))
+
+    # A term on the parameters alone cancels in the (nudged - free) difference above, so it has to
+    # be differentiated separately and added in here, before the outer solver sees the gradients.
+    if params_regularizer is not None:
+        reg_verts, reg_hes, reg_faces = grad(params_regularizer, argnums=(0, 1, 2))(
+            vert_params, he_params, face_params
+        )
+        grad_verts = grad_verts + reg_verts
+        grad_hes = grad_hes + reg_hes
+        grad_faces = grad_faces + reg_faces
 
     params = {"vert_params": vert_params, "he_params": he_params, "face_params": face_params}
     grads = {"vert_params": grad_verts, "he_params": grad_hes, "face_params": grad_faces}
+    return params, grads
+
+
+def outer_eq_prop(
+    vertTable: Array,
+    heTable: Array,
+    faceTable: Array,
+    width: float,
+    height: float,
+    vert_params: Array,
+    he_params: Array,
+    face_params: Array,
+    vertTable_target: Array,
+    heTable_target: Array,
+    faceTable_target: Array,
+    L_in: InnerLossFunction,
+    L_out: OuterLossFunction,
+    solver_inner: optax.GradientTransformation,
+    solver_outer: optax.GradientTransformation,
+    min_dist_T1: float,
+    iterations_max: int,
+    tolerance: float,
+    patience: int,
+    selected_verts: Array | None,
+    selected_hes: Array | None,
+    selected_faces: Array | None,
+    image_target: Array | None,
+    beta: float,
+    update_t1_func: UpdateT1Func = update_T1,
+    params_regularizer: Callable | None = None,
+    ep_variant: EPVariant = EPVariant.CENTERED,
+) -> tuple[Array, Array, Array]:
+    """Outer optimization for equilibrium propagation method.
+
+    `params_regularizer(vert_params, he_params, face_params) -> scalar`, if given, has its
+    gradient added to the equilibrium-propagation gradients before the outer solver's update, so
+    it is optimized jointly with the outer loss.
+
+    The outer-optimizer state is re-initialised every call (current / default behaviour).
+    For persistent state across epochs use ``outer_eq_prop_with_state``.
+    """
+    params, grads = _compute_ep_grads(
+        vertTable, heTable, faceTable,
+        width, height,
+        vert_params, he_params, face_params,
+        vertTable_target, heTable_target, faceTable_target,
+        L_in, L_out,
+        solver_inner,
+        min_dist_T1, iterations_max, tolerance, patience,
+        selected_verts, selected_hes, selected_faces,
+        image_target, beta,
+        update_t1_func, params_regularizer, ep_variant,
+    )
+
     opt_state = solver_outer.init(params)
     updates, opt_state = solver_outer.update(grads, opt_state, params)
     updated_params = optax.apply_updates(params, updates)
@@ -1038,6 +1148,71 @@ def outer_eq_prop(
     face_params = updated_params["face_params"]  # type: ignore
 
     return vert_params, he_params, face_params
+
+
+def outer_eq_prop_with_state(
+    vertTable: Array,
+    heTable: Array,
+    faceTable: Array,
+    width: float,
+    height: float,
+    vert_params: Array,
+    he_params: Array,
+    face_params: Array,
+    vertTable_target: Array,
+    heTable_target: Array,
+    faceTable_target: Array,
+    L_in: InnerLossFunction,
+    L_out: OuterLossFunction,
+    solver_inner: optax.GradientTransformation,
+    solver_outer: optax.GradientTransformation,
+    min_dist_T1: float,
+    iterations_max: int,
+    tolerance: float,
+    patience: int,
+    selected_verts: Array | None,
+    selected_hes: Array | None,
+    selected_faces: Array | None,
+    image_target: Array | None,
+    beta: float,
+    opt_state: optax.OptState | None,
+    update_t1_func: UpdateT1Func = update_T1,
+    params_regularizer: Callable | None = None,
+    ep_variant: EPVariant = EPVariant.CENTERED,
+) -> tuple[Array, Array, Array, optax.OptState]:
+    """Outer optimization for equilibrium propagation with persistent optimizer state.
+
+    Identical to ``outer_eq_prop`` except:
+    - Accepts ``opt_state``: if ``None``, initialises the state (first call semantics);
+      otherwise uses the supplied state (persistent-Adam / any stateful optax transform).
+    - Returns ``(vert_params, he_params, face_params, updated_opt_state)`` so the caller
+      can thread the state across epochs.
+
+    This function is intended to be called from ``PbcBilevelOptimizer._outer_opt`` when
+    ``persist_outer_state=True``.  All other callers should use ``outer_eq_prop``.
+    """
+    params, grads = _compute_ep_grads(
+        vertTable, heTable, faceTable,
+        width, height,
+        vert_params, he_params, face_params,
+        vertTable_target, heTable_target, faceTable_target,
+        L_in, L_out,
+        solver_inner,
+        min_dist_T1, iterations_max, tolerance, patience,
+        selected_verts, selected_hes, selected_faces,
+        image_target, beta,
+        update_t1_func, params_regularizer, ep_variant,
+    )
+
+    if opt_state is None:
+        opt_state = solver_outer.init(params)
+    updates, new_opt_state = solver_outer.update(grads, opt_state, params)
+    updated_params = optax.apply_updates(params, updates)
+    vert_params = updated_params["vert_params"]  # type: ignore
+    he_params = updated_params["he_params"]  # type: ignore
+    face_params = updated_params["face_params"]  # type: ignore
+
+    return vert_params, he_params, face_params, new_opt_state
 
 
 ###########################
@@ -1070,6 +1245,7 @@ def outer_implicit(
     selected_faces: Array | None,
     image_target: Array | None,
     update_t1_func: UpdateT1Func = update_T1,
+    params_regularizer: Callable | None = None,
 ) -> tuple[Array, Array, Array]:
     """Outer optimization for implicit differentiation method."""
 
@@ -1213,6 +1389,18 @@ def outer_implicit(
     grad_hes = L_in_derivative_hes.T @ dL_out_dvert
     grad_faces = L_in_derivative_faces.T @ dL_out_dvert
 
+    # The mean-tension gauge (and any parameter-space regulariser) applies to EVERY estimator,
+    # not only EP. The total objective is C(x*(theta)) + R(theta), so
+    # grad_theta = hypergradient + grad R(theta). This is simpler than the EP case: there is no
+    # cancellation to work around, because R depends on theta alone.
+    if params_regularizer is not None:
+        reg_verts, reg_hes, reg_faces = grad(params_regularizer, argnums=(0, 1, 2))(
+            vert_params, he_params, face_params
+        )
+        grad_verts = grad_verts + reg_verts
+        grad_hes = grad_hes + reg_hes
+        grad_faces = grad_faces + reg_faces
+
     params = {"vert_params": vert_params, "he_params": he_params, "face_params": face_params}
     grads = {"vert_params": grad_verts, "he_params": grad_hes, "face_params": grad_faces}
     opt_state = solver_outer.init(params)
@@ -1256,6 +1444,7 @@ def outer_adjoint_state(
     selected_faces: Array | None,
     image_target: Array | None,
     update_t1_func: UpdateT1Func = update_T1,
+    params_regularizer: Callable | None = None,
 ) -> tuple[Array, Array, Array]:
     """Outer optimization for adjoint state method."""
 
@@ -1345,6 +1534,18 @@ def outer_adjoint_state(
     grad_verts = -Lambda @ crossderivative_verts
     grad_hes = -Lambda @ crossderivative_hes
     grad_faces = -Lambda @ crossderivative_faces
+
+    # The mean-tension gauge (and any parameter-space regulariser) applies to EVERY estimator,
+    # not only EP. The total objective is C(x*(theta)) + R(theta), so
+    # grad_theta = hypergradient + grad R(theta). This is simpler than the EP case: there is no
+    # cancellation to work around, because R depends on theta alone.
+    if params_regularizer is not None:
+        reg_verts, reg_hes, reg_faces = grad(params_regularizer, argnums=(0, 1, 2))(
+            vert_params, he_params, face_params
+        )
+        grad_verts = grad_verts + reg_verts
+        grad_hes = grad_hes + reg_hes
+        grad_faces = grad_faces + reg_faces
 
     params = {"vert_params": vert_params, "he_params": he_params, "face_params": face_params}
     grads = {"vert_params": grad_verts, "he_params": grad_hes, "face_params": grad_faces}

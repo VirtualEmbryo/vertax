@@ -15,10 +15,12 @@ from vertax.geo import get_area, get_length
 from vertax.method_enum import BilevelOptimizationMethod
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from jax import Array
 
 
-def test_n_bilevel_opt() -> None:  # noqa: C901
+def test_n_bilevel_opt(tmp_path: Path) -> None:  # noqa: C901
     """Check the whole function of n bilevel opt which makes a lot of things."""
     # Settings
     n_cells = 20
@@ -180,9 +182,12 @@ def test_n_bilevel_opt() -> None:  # noqa: C901
         also_report_to_stdout=True,
         save_plotmesh_every=10,
         save_mesh_data_every=10,
-        save_folder="test_n_bilevel",
+        save_folder=str(tmp_path / "n_bilevel"),
     )
 
 
 if __name__ == "__main__":
-    test_n_bilevel_opt()
+    import tempfile
+    from pathlib import Path
+
+    test_n_bilevel_opt(Path(tempfile.mkdtemp()))

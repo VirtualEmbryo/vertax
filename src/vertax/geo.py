@@ -8,6 +8,38 @@ import jax.numpy as jnp
 from jax import Array, jit, vmap
 
 
+# The nine periodic images of a point: itself, plus translations by +/-width and/or +/-height.
+# Order is preserved from the original cost_v2v implementation.
+PBC_IMAGE_OFFSETS = (
+    (0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0),
+    (1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0),
+)
+
+
+def min_image_sq_dist(p: Array, q: Array, width: float, height: float) -> Array:
+    """Squared distance from ``p`` to the **nearest periodic image** of ``q`` (2D, PBC).
+
+    Under periodic boundary conditions two points can be close through a box face while far
+    apart in stored coordinates, so the distance is measured to the nearest of the nine images
+    of ``q`` (itself plus translations by +/-width and/or +/-height). This makes the result
+    independent of which image representative happens to be stored, which is why both the
+    vertex-to-vertex cost and the periodic T1 swap-repair criterion must use it.
+
+    Implemented as one vectorised reduction over a ``(9, 2)`` offset array.
+
+    **Do not rewrite this as ``jnp.min`` over a Python list of nine scalars.** Under ``jit``
+    (inside ``vmap`` + ``grad``) XLA emitted NaN gradients for that form on real meshes -- 2 of
+    24 saved dataset meshes -- whereas this form is NaN-free jitted, unjitted, and in the
+    degenerate case ``p == q`` exactly. The equivalent ``(min_k sqrt(u_k))**2`` spelling is
+    defective: its AD path is ``0/0 -> NaN`` when ``p == q``.
+    """
+    offsets = jnp.asarray(
+        [[a * width, b * height] for a, b in PBC_IMAGE_OFFSETS], dtype=p.dtype
+    )
+    delta = p[:2] - q[:2]
+    return jnp.min(jnp.sum((delta - offsets) ** 2, axis=1))
+
+
 @partial(jit, static_argnums=(3, 4))
 def _sum_edges(
     face: Array, heTable: Array, faceTable: Array, fun: Callable[[Array, Array], Array], max_iter: int
@@ -326,7 +358,16 @@ def get_area_bounded(face: Array, vertTable: Array, angTable: Array, heTable: Ar
     final_carry, _ = jax.lax.scan(scan_body, initial_carry, xs)  # type: ignore
     _, final_res, _ = final_carry
 
-    return 0.5 * jnp.abs(jnp.sum(final_res))
+    # final_res is [shoelace_sum, arc_correction_sum]. Take the modulus of EACH separately, not of
+    # their sum: the cell area is (chord polygon) + (arc caps), and the two terms carry unrelated
+    # signs. The sign of the shoelace sum encodes only the face's traversal orientation -- about 45%
+    # of faces in the stored bounded meshes are clockwise -- while the arc sum is non-negative by
+    # construction (chordlen**2 >= 0 and (angle - sin*cos)/(2 sin**2) > 0 over the range angles are
+    # clipped to in update_T1_bounded, so an inward-bulging arc is not representable). Using
+    # 0.5*abs(shoelace + arc) instead subtracts the caps on every clockwise face, returning
+    # abs(caps - polygon), which is not an area and can vanish; on real meshes the two differ by up
+    # to 117x. Pinned by tests/test_area_bounded_groundtruth.py, which fails for the abs(sum) form.
+    return 0.5 * jnp.sum(jnp.abs(final_res))
 
 
 @jit

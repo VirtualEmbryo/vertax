@@ -112,7 +112,7 @@ def plot_mesh(
     vertex_parameters_name: str = "",
     edge_parameters_name: str = "",
     face_parameters_name: str = "",
-    show: bool = True,
+    show: bool = False,
     save: bool = False,
     save_path: str = "pbc_mesh.png",
     faces_cmap_name: str = "cividis",
@@ -125,9 +125,20 @@ def plot_mesh(
     forced_edge_scale: tuple[float, float] | None = None,
     forced_face_scale: tuple[float, float] | None = None,
 ) -> None:
-    """Plot the mesh and decide to save and/or show the mesh or not."""
+    """Plot the mesh, and return the figure and axes so the caller can save or compose.
+
+    Args:
+        show: display the figure. **Defaults to False.** A library function that blocks by default
+            is a defect: under an interactive backend `plt.show()` waits for a human, which hangs a
+            headless or CI run indefinitely. Pass `show=True` for an interactive session.
+
+    Returns:
+        `(fig, ax)`. The figure is NOT closed, so it can be saved, annotated or composed; under an
+        inline notebook backend it renders at the end of the cell either way. A caller drawing many
+        meshes should close them itself.
+    """
     if isinstance(mesh, PbcMesh):
-        _plot_pbc_mesh(
+        return _plot_pbc_mesh(
             mesh,
             vertex_plot,
             edge_plot,
@@ -149,7 +160,7 @@ def plot_mesh(
             forced_face_scale,
         )
     elif isinstance(mesh, BoundedMesh):
-        _plot_bounded_mesh(
+        return _plot_bounded_mesh(
             mesh,
             vertex_plot,
             edge_plot,
@@ -242,7 +253,7 @@ def _plot_pbc_mesh(
     vertex_parameters_name: str = "",
     edge_parameters_name: str = "",
     face_parameters_name: str = "",
-    show: bool = True,
+    show: bool = False,
     save: bool = False,
     save_path: str = "pbc_mesh.png",
     faces_cmap_name: str = "cividis",
@@ -255,7 +266,18 @@ def _plot_pbc_mesh(
     forced_edge_scale: tuple[float, float] | None = None,
     forced_face_scale: tuple[float, float] | None = None,
 ) -> None:
-    """Plot the mesh and decide to save and/or show the mesh or not."""
+    """Plot the mesh, and return the figure and axes so the caller can save or compose.
+
+    Args:
+        show: display the figure. **Defaults to False.** A library function that blocks by default
+            is a defect: under an interactive backend `plt.show()` waits for a human, which hangs a
+            headless or CI run indefinitely. Pass `show=True` for an interactive session.
+
+    Returns:
+        `(fig, ax)`. The figure is NOT closed, so it can be saved, annotated or composed; under an
+        inline notebook backend it renders at the end of the cell either way. A caller drawing many
+        meshes should close them itself.
+    """
     fig, _ax = _get_plot_pbc_mesh(
         mesh,
         vertex_plot,
@@ -281,7 +303,11 @@ def _plot_pbc_mesh(
     if show:
         plt.show()
 
-    plt.close(fig)
+    # The figure is deliberately NOT closed. Closing it here would make the returned handles
+    # useless and, with `show` now defaulting to False, would mean a plain `plot_mesh(mesh)`
+    # produced nothing at all -- silently. A caller drawing many meshes in a loop should close
+    # them itself: `fig, ax = plot_mesh(...); ...; plt.close(fig)`.
+    return fig, _ax
 
 
 def _get_plot_pbc_mesh(
@@ -573,7 +599,7 @@ def _plot_bounded_mesh(
     vertex_parameters_name: str = "",
     edge_parameters_name: str = "",
     face_parameters_name: str = "",
-    show: bool = True,
+    show: bool = False,
     save: bool = False,
     save_path: str = "bounded_mesh.png",
     faces_cmap_name: str = "cividis",
@@ -586,7 +612,18 @@ def _plot_bounded_mesh(
     forced_edge_scale: tuple[float, float] | None = None,
     forced_face_scale: tuple[float, float] | None = None,
 ) -> None:
-    """Plot the mesh and decide to save and/or show the mesh or not."""
+    """Plot the mesh, and return the figure and axes so the caller can save or compose.
+
+    Args:
+        show: display the figure. **Defaults to False.** A library function that blocks by default
+            is a defect: under an interactive backend `plt.show()` waits for a human, which hangs a
+            headless or CI run indefinitely. Pass `show=True` for an interactive session.
+
+    Returns:
+        `(fig, ax)`. The figure is NOT closed, so it can be saved, annotated or composed; under an
+        inline notebook backend it renders at the end of the cell either way. A caller drawing many
+        meshes should close them itself.
+    """
     fig, _ax = _get_plot_bounded_mesh(
         mesh,
         vertex_plot,
@@ -612,7 +649,8 @@ def _plot_bounded_mesh(
     if show:
         plt.show()
 
-    plt.close(fig)
+    # Not closed, and the handles are returned; see the note in `_plot_bounded_mesh`.
+    return fig, _ax
 
 
 def _get_plot_bounded_mesh(

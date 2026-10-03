@@ -4,8 +4,12 @@
 
 [![preprint](https://img.shields.io/badge/preprint-green)](https://arxiv.org/abs/2604.06896)
 [![License: CC BY-SA](https://img.shields.io/badge/License-CC%20BY--SA-lightgrey.svg)](https://creativecommons.org/licenses/by-sa/4.0/)
-[![Python package index](https://img.shields.io/pypi/v/vertAX.svg)](https://pypi.org/project/vertAX)
 [![Documentation](https://img.shields.io/badge/documentation-green)](https://html-preview.github.io/?url=https://github.com/VirtualEmbryo/VertAX/blob/main/docs/vertax.html)
+
+<!-- PyPI badge removed 2026-08-15: `vertax` / `vertAX` are both unregistered on PyPI
+     (pypi.org/pypi/vertax/json returns HTTP 404), so the badge rendered as "unknown" and
+     `pip install vertax` failed. Restore it when the package is actually published:
+     [![Python package index](https://img.shields.io/pypi/v/vertAX.svg)](https://pypi.org/project/vertAX) -->
 
 <!-- [![DOI](https://zenodo.org/badge/144513571.svg)](https://zenodo.org/badge/latestdoi/144513571) -->
 
@@ -73,7 +77,7 @@ In other words, VertAX repeatedly solves a mechanical equilibrium problem for a 
   VertAX formulates inverse problems as nested optimization: an inner mechanical equilibrium problem and an outer parameter-learning problem.
 
 - 🔬 **Multiple gradient strategies**  
-  Supports **Automatic Differentiation (AD)**, **Implicit Differentiation (ID)**, and **Equilibrium Propagation (EP)**.
+  Four outer-gradient estimators: **Automatic Differentiation (AD)**, **sensitivity Implicit Differentiation (Sen-ID)**, **Adjoint-state Implicit Differentiation (Adj-ID)**, and a **centered (two-sided) Equilibrium Propagation (EP)** estimator.
 
 - 🔁 **Differentiable and non-differentiable workflows**  
   VertAX supports fully differentiable pipelines, while EP also enables inverse modeling with simulators that are only accessible through repeated executions.
@@ -108,17 +112,19 @@ source .venv/bin/activate
 
 ```sh
 git clone https://github.com/VirtualEmbryo/VertAX.git
-cd vertax
+cd VertAX
 pip install -e .
 ```
 
 ### From PyPI
 
-```sh
-pip install vertax
-```
+**Not yet published.** VertAX is not on PyPI, so `pip install vertax` will not work — install from
+source as above.
 
-**Dependencies**: JAX, Optax, SciPy (for Voronoi initialization), Matplotlib (for plotting).
+**Dependencies**: JAX and JAXlib, Optax, JAXopt, NumPy, SciPy (Voronoi initialization),
+Matplotlib (plotting), scikit-image and tifffile (image input), pandas, and Cellpose (segmentation
+of microscopy images). Exact pins are in `pyproject.toml`; `uv.lock` and `requirements.txt` are
+generated from it and kept in sync by the `uv` pre-commit hooks.
 
 For GPU support, install JAX with CUDA as described in the [JAX docs](https://github.com/google/jax#installation) before installing VertAX.
 
@@ -154,15 +160,16 @@ VertAX supports two complementary simulation modes, designed for different class
 
 ## Gradient Strategies
 
-VertAX implements and benchmarks three complementary methods for computing outer gradients through the implicit inner problem:
+VertAX implements and benchmarks four complementary methods for computing outer gradients through the implicit inner problem:
 
 | Method                     | How it works                                                                                              | Pros                                                               | Cons                                                  |
 | -------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
-| **AD** (Automatic Diff.)   | Unrolls the inner optimization steps; forward-mode JVP via `jax.jacfwd`                                   | Exact for differentiable pipelines; easy in JAX                    | Cost scales with # iterations × # parameters          |
-| **ID** (Implicit Diff.)    | Differentiates the optimality condition ∇ₓE=0 via Implicit Function Theorem; JVP or adjoint (VJP) variant | No unrolling; constant memory; exact near equilibrium              | Requires Hessian solve; sensitive to ill-conditioning |
-| **EP** (Equilibrium Prop.) | Estimates gradient from perturbed free and nudged equilibria; no backprop required                        | Memory-efficient; works with non-differentiable/incomplete solvers | Approximate; depends on perturbation size β           |
+| **AD** (Automatic Diff.)   | Reverse-mode `jax.grad` through the **unrolled** inner solve (`BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION`) | Exact for differentiable pipelines; easy in JAX                    | Memory and cost scale with the number of unrolled inner iterations; incompatible with line-search inner solvers |
+| **Sen-ID** (Implicit Diff.) | Differentiates the optimality condition ∇ₓE=0 via the Implicit Function Theorem, propagating sensitivities forward (`IMPLICIT_DIFFERENTIATION`) | No unrolling; constant memory; exact near equilibrium              | Requires a Hessian solve; cost grows with the number of parameters |
+| **Adj-ID** (Adjoint state) | Same optimality condition, solved in the **adjoint** (VJP) direction instead (`ADJOINT_STATE`)             | One linear solve per outer step regardless of parameter count      | Requires a Hessian solve; sensitive to ill-conditioning |
+| **EP** (Equilibrium Prop.) | **Centered, two-sided** estimator: solves for a free equilibrium at −β and a nudged equilibrium at +β, then takes (∇L\_nudged − ∇L\_free) / (2β); no backprop required | Memory-efficient; works with non-differentiable/incomplete solvers; the symmetric ∓β perturbation cancels the leading-order O(β) bias, giving a lower-variance, more accurate gradient than a one-sided (0 → +β) estimate | Still a finite-β approximation of the exact implicit gradient (residual error scales as O(β²)); requires two inner solves per outer step; accuracy depends on choice of β |
 
-**In practice**: AD and EP often recover similar parameter trends on synthetic inverse problems, while EP is especially attractive for simulators that cannot be made fully differentiable.
+**In practice**: VertAX's EP estimator is a centered second-order estimator based on symmetric ∓β perturbations, not a one-sided finite difference. AD and EP often recover similar parameter trends on synthetic inverse problems, while EP is especially attractive for simulators that cannot be made fully differentiable.
 
 ---
 
@@ -174,6 +181,14 @@ See the [`examples/`](examples) folder for in-depth examples:
 | ----------------------------------------- | ---------------------------------------------------------- |
 | `inverse_modelling_example.ipynb`         | Inverse modeling with periodic boundary conditions         |
 | `inverse_modelling_example_bounded.ipynb` | Inverse design with bounded cluster (convergent extension) |
+| `pbc_from_image.ipynb`                    | Building a periodic mesh from a segmented microscopy image  |
+
+For **tension inference specifically** — which settings matter, which metric to report, and which
+conclusions from a run are trustworthy — see
+[`docs/tension_inference_guide.md`](docs/tension_inference_guide.md). It collects the practical
+results of the 2026-08 analysis campaign, including the mean-tension gauge (which is **off by
+default** and must be set explicitly) and why truncating the inner solve buys efficiency rather than
+accuracy.
 
 ---
 
@@ -270,13 +285,13 @@ If you use _VertAX_ in your research, please cite:
 ```
 
 @misc{pasqui2026vertaxdifferentiablevertexmodel,
-            title={VertAX: a differentiable vertex model for learning epithelial tissue mechanics},
-            author={Alessandro Pasqui and Jim Martin Catacora Ocana and Anshuman Sinha and Matthieu Perez and Fabrice Delbary and Giorgio Gosti and Mattia Miotto and Domenico Caudo and Maxence Ernoult and Hervé Turlier},
-            year={2026},
-            eprint={2604.06896},
-            archivePrefix={arXiv},
-            primaryClass={cs.LG},
-            url={<https://arxiv.org/abs/2604.06896}>,
+            title={VertAX: a differentiable vertex model for learning epithelial tissue mechanics},
+            author={Alessandro Pasqui and Jim Martin Catacora Ocana and Anshuman Sinha and Matthieu Perez and Fabrice Delbary and Giorgio Gosti and Mattia Miotto and Domenico Caudo and Maxence Ernoult and Hervé Turlier},
+            year={2026},
+            eprint={2604.06896},
+            archivePrefix={arXiv},
+            primaryClass={cs.LG},
+            url={https://arxiv.org/abs/2604.06896},
 }
 ```
 
