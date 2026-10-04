@@ -16,6 +16,13 @@ if TYPE_CHECKING:
     from vertax.opt import InnerLossFunction
     from vertax.opt_bounded import InnerLossFunctionBounded
 
+# Bounds on the half-angle of a free (curved) boundary arc of a bounded mesh: an arc stays strictly
+# between a straight chord and a half circle. Beyond a half circle the arc geometry is no longer a
+# smooth function of the vertex positions and angles, so a relaxation that lets an angle cross it
+# stalls on a non-smooth energy.
+ARC_HALF_ANGLE_MIN = 0.017
+ARC_HALF_ANGLE_MAX = jnp.pi / 2 - 0.001
+
 ROT_ANGLE = -jnp.pi / 2
 SINA = jnp.sin(ROT_ANGLE)
 COSA = jnp.cos(ROT_ANGLE)
@@ -371,7 +378,7 @@ def update_T1_bounded(  # noqa: C901, N802
 ) -> tuple[Array, Array, Array, Array]:
     """Find and apply T1 topological transitions for bounded meshes."""
     num_edges = heTable.shape[0] // 2
-    angTable = jnp.clip(angTable, 0.017, jnp.pi / 2 - 0.001)
+    angTable = jnp.clip(angTable, ARC_HALF_ANGLE_MIN, ARC_HALF_ANGLE_MAX)
     scale = (min_dist_T1 + 10 ** (-3)) / 2
 
     # This case may externalize a cell (moves it to be contact with the medium), depending on the energy check

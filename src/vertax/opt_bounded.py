@@ -12,7 +12,7 @@ from numpy.typing import ArrayLike
 from scipy.sparse.linalg import LinearOperator, minres
 
 from vertax.method_enum import BilevelOptimizationMethod
-from vertax.topo import update_T1_bounded
+from vertax.topo import ARC_HALF_ANGLE_MAX, ARC_HALF_ANGLE_MIN, update_T1_bounded
 
 # Per-step cap on how far a single vertex may move during inner relaxation,
 # expressed as a MULTIPLE of min_dist_T1 rather than as an absolute length.
@@ -274,7 +274,11 @@ def _minimize_bounded(  # noqa: C901
                 vscale = jnp.minimum(1.0, max_step / jnp.maximum(vnorm, 1e-12))
                 vstep = vstep * vscale
             new_vt = vt.at[sel].set(vt[sel] + vstep)
-            new_at = at + updates[1]
+            # Keep every arc between a chord and a half circle at every step. The T1 routine applies
+            # the same limit when it is called, but with T1 transitions disabled nothing else does,
+            # and an arc that crosses a half circle leaves the smooth branch of the energy. Clipping
+            # twice is idempotent, so relaxations with T1 transitions are unchanged.
+            new_at = jnp.clip(at + updates[1], ARC_HALF_ANGLE_MIN, ARC_HALF_ANGLE_MAX)
             vt = lax.cond(is_running, lambda: new_vt, lambda: vt)
             at = lax.cond(is_running, lambda: new_at, lambda: at)
         elif argnums == 1:
