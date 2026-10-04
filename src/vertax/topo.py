@@ -21,7 +21,7 @@ SINA = jnp.sin(ROT_ANGLE)
 COSA = jnp.cos(ROT_ANGLE)
 
 
-@partial(jit, static_argnums=(3, 4, 8, 13))
+@partial(jit, static_argnums=(3, 4, 8, 13, 14))
 def update_T1(  # noqa: N802
     vertTable: Array,
     heTable: Array,
@@ -37,8 +37,20 @@ def update_T1(  # noqa: N802
     selected_hes: Array | None,
     selected_faces: Array | None,
     perform_energy_check: bool = False,
+    reopen_margin: float = 0.1,
 ) -> tuple[Array, Array, Array]:
-    """Detect and apply T1 topological changes."""
+    """Detect and apply T1 topological changes.
+
+    Every edge no longer than ``min_dist_T1`` whose two cells are not triangles is flipped, and the new
+    edge is given the length ``(1 + reopen_margin) * min_dist_T1`` about the old edge's midpoint. With
+    ``perform_energy_check`` the flip is kept only if its energy does not exceed that of the unflipped
+    configuration with the short edge re-stretched to the same length along its own direction;
+    otherwise the re-stretched, unflipped configuration is kept. Without it every flip is kept.
+
+    ``reopen_margin`` is keyword-only in practice: loops call this function with the thirteen
+    positional arguments of ``UpdateT1Func`` plus ``perform_energy_check``, so a different margin is
+    passed with ``functools.partial(update_T1, reopen_margin=...)``.
+    """
     # if selected_verts is None:
     #     selected_verts = jnp.arange(vertTable.shape[0])
     # if selected_hes is None:
@@ -148,7 +160,7 @@ def update_T1(  # noqa: N802
                 + jnp.sin(angle) * (x_source_he - center_x_he)
                 + jnp.cos(angle) * (y_source_he - center_y_he)
             )
-            scale_factor = ((min_dist_T1 + min_dist_T1 * 0.1) / 2.0) / jnp.sqrt(
+            scale_factor = ((min_dist_T1 + min_dist_T1 * reopen_margin) / 2.0) / jnp.sqrt(
                 (turn_x_source_he - center_x_he) ** 2 + (turn_y_source_he - center_y_he) ** 2
             )
             last_x_source_he = (turn_x_source_he - center_x_he) * scale_factor + center_x_he
@@ -175,7 +187,7 @@ def update_T1(  # noqa: N802
                 + jnp.sin(angle) * (x_source_twin_he - center_x_twin_he)
                 + jnp.cos(angle) * (y_source_twin_he - center_y_twin_he)
             )
-            scale_factor = ((min_dist_T1 + min_dist_T1 * 0.1) / 2.0) / jnp.sqrt(
+            scale_factor = ((min_dist_T1 + min_dist_T1 * reopen_margin) / 2.0) / jnp.sqrt(
                 (turn_x_source_twin_he - center_x_twin_he) ** 2 + (turn_y_source_twin_he - center_y_twin_he) ** 2
             )
             last_x_source_twin_he = (turn_x_source_twin_he - center_x_twin_he) * scale_factor + center_x_twin_he
@@ -234,7 +246,7 @@ def update_T1(  # noqa: N802
                 + jnp.sin(angle) * (x_source_he - center_x_he)
                 + jnp.cos(angle) * (y_source_he - center_y_he)
             )
-            scale_factor = ((min_dist_T1 + min_dist_T1 * 0.1) / 2.0) / jnp.sqrt(
+            scale_factor = ((min_dist_T1 + min_dist_T1 * reopen_margin) / 2.0) / jnp.sqrt(
                 (turn_x_source_he - center_x_he) ** 2 + (turn_y_source_he - center_y_he) ** 2
             )
             last_x_source_he = (turn_x_source_he - center_x_he) * scale_factor + center_x_he
@@ -261,7 +273,7 @@ def update_T1(  # noqa: N802
                 + jnp.sin(angle) * (x_source_twin_he - center_x_twin_he)
                 + jnp.cos(angle) * (y_source_twin_he - center_y_twin_he)
             )
-            scale_factor = ((min_dist_T1 + min_dist_T1 * 0.1) / 2.0) / jnp.sqrt(
+            scale_factor = ((min_dist_T1 + min_dist_T1 * reopen_margin) / 2.0) / jnp.sqrt(
                 (turn_x_source_twin_he - center_x_twin_he) ** 2 + (turn_y_source_twin_he - center_y_twin_he) ** 2
             )
             last_x_source_twin_he = (turn_x_source_twin_he - center_x_twin_he) * scale_factor + center_x_twin_he
