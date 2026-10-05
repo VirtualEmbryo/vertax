@@ -3,7 +3,7 @@
 <!-- Badges -->
 
 [![preprint](https://img.shields.io/badge/preprint-green)](https://arxiv.org/abs/2604.06896)
-[![License: CC BY-SA](https://img.shields.io/badge/License-CC%20BY--SA-lightgrey.svg)](https://creativecommons.org/licenses/by-sa/4.0/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Documentation](https://img.shields.io/badge/documentation-green)](https://html-preview.github.io/?url=https://github.com/VirtualEmbryo/VertAX/blob/main/docs/vertax.html)
 
 <!-- PyPI badge removed 2026-08-15: `vertax` / `vertAX` are both unregistered on PyPI
@@ -29,7 +29,7 @@ for vertex modeling and inverse design of epithelial tissues.
 </b>
 <br><br>
 
-[![Typing SVG](https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=18&duration=2000&pause=1200&color=38C2FF&center=false&width=295&height=30&lines=%5C+Forward+Simulations;%5C+Parameter+Inference;%5C+Inverse+Mechanical+Design)](https://gitlab.college-de-france.fr/virtualembryo/vertax) <br><b>— all in one unified Python package.</b>
+[![Typing SVG](https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=18&duration=2000&pause=1200&color=38C2FF&center=false&width=295&height=30&lines=%5C+Forward+Simulations;%5C+Parameter+Inference;%5C+Inverse+Mechanical+Design)](https://github.com/VirtualEmbryo/VertAX) <br><b>— all in one unified Python package.</b>
 
 </td>
 </tr>
@@ -394,6 +394,8 @@ This project received funding from the European Union’s Horizon 2020 research 
 
 ## License
 
-VertAX is distributed under the **Creative Commons Attribution–ShareAlike 4.0 International (CC BY-SA 4.0)** [`license`](LICENSE).
+VertAX is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
-You are free to share and adapt the material, provided that appropriate credit is given and that any derivative work is distributed under the same license.
+VertAX is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details. The full text is in [`LICENSE`](LICENSE); you should also have received it with this program, otherwise see <https://www.gnu.org/licenses/>.
+
+Copyright holders and contributors are listed in [`AUTHORS`](AUTHORS).
