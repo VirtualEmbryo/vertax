@@ -4,18 +4,24 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vertax"
-version = "0.1.0"
+version = "0.2.0"
 license = { file = "LICENSE" }
 description = "Optimization of vertex models."
 authors = [
-  { name = "Alessandro Pasqui", email = "alessandro.pasqui@college-de-france.fr" },
+  { name = "Turlier lab", email = "herve.turlier@college-de-france.fr" },
 ]
+maintainers = [
+  { name = "Herve Turlier", email = "herve.turlier@college-de-france.fr" },
+]
+# Contributors, alphabetical: Jim Catacora Ocana, Alessandro Pasqui, Anshuman Sinha,
+# Herve Turlier. Attribution is kept as a group here and in LICENSE so that it does not
+# have to be re-ranked; see https://www.turlierlab.com.
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "cellpose==3.1.0",
   "importlib-resources>=6.5.2",
-  "jax>=0.4.34",
+  "jax==0.4.34",
   "jaxlib==0.4.34",
   "jaxopt==0.8.3",
   "matplotlib==3.8.0",
@@ -23,7 +29,7 @@ dependencies = [
   "optax==0.2.4",
   "pandas>=2.3.3",
   "scikit-image==0.24.0",
-  "scipy>=1.16.2",
+  "scipy==1.17.1",
   "tifffile==2024.12.12",
 ]
 
@@ -44,10 +50,12 @@ classifiers = [
 #  - which license your package is available under,
 
 [project.urls]
-Homepage = "https://gitlab.college-de-france.fr/virtualembryo/vertax"
-"Bug Tracker" = "https://gitlab.college-de-france.fr/virtualembryo/vertax/issues"
-Discussions = "https://gitlab.college-de-france.fr/virtualembryo/vertax/discussions"
-Changelog = "https://gitlab.college-de-france.fr/virtualembryo/vertax/releases"
+# Corrected 2026-08-15: these four pointed at gitlab.college-de-france.fr/virtualembryo/vertax,
+# which is not where this repository lives. The actual remote is src.koda.cnrs.fr/turlierlab/vertax.
+Homepage = "https://src.koda.cnrs.fr/turlierlab/vertax"
+"Bug Tracker" = "https://src.koda.cnrs.fr/turlierlab/vertax/-/issues"
+Changelog = "https://src.koda.cnrs.fr/turlierlab/vertax/-/releases"
+"Turlier lab" = "https://www.turlierlab.com"
 
 [tool.ruff]
 line-length = 120
@@ -140,17 +148,35 @@ addopts = [
   "--strict-markers",
   "--strict-config",
   "--ignore=tests/other_tests",
+  # Long-running tests are deselected by default; run them with `pytest -m long` (see README).
+  "-m", "not long",
 ]
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+  "error",
+  # matplotlib 3.8.0 drives pyparsing through its camelCase compatibility aliases when parsing
+  # font specs at import time; pyparsing >= 3.3 deprecates those aliases (observed: `parseString`,
+  # `resetCache`, and the list is matplotlib's, not ours). Measured with pyparsing 3.3.2 and
+  # matplotlib 3.8.0. Under a bare "error" every matplotlib import becomes a COLLECTION failure --
+  # 16 of 22 test modules -- so a fresh clone reports a red suite for a reason unrelated to
+  # VertAX, which is the worst possible first impression of a released repository.
+  #
+  # This is scoped to one warning class from one third-party library, NOT a relaxation of the
+  # "error" policy: every VertAX-raised warning is still fatal. Filtering by message was tried
+  # first and is the wrong shape -- it turns into whack-a-mole over whichever aliases matplotlib
+  # happens to call. DELETE THIS when matplotlib is upgraded past 3.8, and re-run the suite to
+  # confirm it is no longer needed rather than leaving it as permanent debt.
+  "ignore::pyparsing.warnings.PyparsingDeprecationWarning",
+]
 log_cli_level = "INFO"
 testpaths = ["tests"]
-markers = ["long: marks tests as slow (deselect with '-m \"not slow\"')"]
+markers = ["long: long-running or memory-hungry test, deselected by default (run with '-m long')"]
 
 [dependency-groups]
 dev = [
     "jupyterlab>=4.5.7",
     "pdoc>=16.0.0",
     "pytest>=8.4.2",
+    "pytest-timeout",
     "scalene>=1.5.55",
 ]

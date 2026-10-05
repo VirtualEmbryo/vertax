@@ -58,32 +58,61 @@ from vertax.cg import cg_linesearch, gd_linesearch
 from vertax.cost import (
     cost_areas,
     cost_checkerboard,
-    cost_d_IAS,
-    cost_IAS,
+    topological_distance,
+    LEGACY_PSF_SIGMA,
     cost_mesh2image,
+    make_cost_mesh2image,
     cost_ratio,
-    cost_tem_halfedge,
     cost_v2v,
-    cost_v2v_ias,
-    cost_v2v_tem,
+    cost_dmic,
 )
 from vertax.energy import (
-    energy_line_tensions,
-    energy_line_tensions_bounded,
+    make_energy_line_tensions,
+    make_energy_line_tensions_bounded,
     energy_shape_factor_hetero,
     energy_shape_factor_homo,
+    make_energy_shape_factor,
 )
 from vertax.meshes.bounded_mesh import BoundedMesh
 from vertax.meshes.mesh import Mesh
 from vertax.meshes.pbc_mesh import PbcMesh
 from vertax.meshes.plot import EdgePlot, FacePlot, VertexPlot, get_plot_mesh, plot_mesh
-from vertax.method_enum import BilevelOptimizationMethod
+from vertax.method_enum import BilevelOptimizationMethod, EPVariant
+from vertax.bilevelopt.rheobop import ShearRheologyOptimizer, ShearState
+from vertax.rheology import (
+    ShearMode,
+    compliance,
+    make_compliance_cost,
+    make_drive_energy,
+    make_shear_mode,
+    min_image_delta_x,
+    mode_amplitude,
+    modulus_from_compliance,
+    target_compliance,
+)
+from vertax.clamped import (
+    ClampedPatch,
+    clamped_edges_are_inert,
+    patch_geometry,
+    signed_face_areas,
+)
+from vertax.trace import (
+    TracedMesh,
+    interior_area_ref,
+    normalized,
+    rasterize_face,
+    regularize,
+    trace_mask,
+    trace_mask_closed,
+    vertex_degrees,
+)
 
 __all__ = [  # noqa: RUF022
     "Mesh",
     "PbcMesh",
     "BoundedMesh",
     "BilevelOptimizationMethod",
+    "EPVariant",
     "_BilevelOptimizer",
     "PbcBilevelOptimizer",
     "BoundedBilevelOptimizer",
@@ -95,17 +124,44 @@ __all__ = [  # noqa: RUF022
     "EdgePlot",
     "VertexPlot",
     "cost_v2v",
+    "LEGACY_PSF_SIGMA",
     "cost_mesh2image",
+    "make_cost_mesh2image",
     "cost_areas",
-    "cost_IAS",
-    "cost_d_IAS",
-    "cost_tem_halfedge",
-    "cost_v2v_ias",
-    "cost_v2v_tem",
+    "topological_distance",
+    "cost_dmic",
     "cost_ratio",
     "cost_checkerboard",
     "energy_shape_factor_hetero",
     "energy_shape_factor_homo",
-    "energy_line_tensions",
-    "energy_line_tensions_bounded",
+    "make_energy_shape_factor",
+    "make_energy_line_tensions",
+    "make_energy_line_tensions_bounded",
+    "TracedMesh",
+    "regularize",
+    "trace_mask",
+    "trace_mask_closed",
+    "vertex_degrees",
+    "rasterize_face",
+    "normalized",
+    "interior_area_ref",
+    "ClampedPatch",
+    "patch_geometry",
+    "signed_face_areas",
+    "clamped_edges_are_inert",
+    # Bulk-driven shear rheometry. The METHOD is exported; the validation and
+    # diagnostic tools of `vertax.rheology` (virial stress, Hessian spectra, topology signatures,
+    # drift probes) are deliberately NOT, and stay reachable by full module path. The public API is
+    # what a reviewer reads as "what this library offers", and diagnostics do not belong in it.
+    "ShearMode",
+    "ShearRheologyOptimizer",
+    "ShearState",
+    "make_shear_mode",
+    "make_drive_energy",
+    "make_compliance_cost",
+    "min_image_delta_x",
+    "mode_amplitude",
+    "compliance",
+    "modulus_from_compliance",
+    "target_compliance",
 ]

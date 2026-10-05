@@ -10,6 +10,7 @@ from vertax.opt import (
     inner_opt,
     outer_adjoint_state,
     outer_eq_prop,
+    outer_eq_prop_with_state,
     outer_implicit,
     outer_opt,
 )
@@ -193,40 +194,80 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                         selected_faces,
                         self.image_target,
                         self._update_T1_func,
+                        self.params_regularizer,
                     )
 
                 case BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION:
-                    (
-                        mesh.vertices_params,
-                        mesh.edges_params,
-                        mesh.faces_params,
-                    ) = outer_eq_prop(
-                        mesh.vertices,
-                        mesh.edges,
-                        mesh.faces,
-                        mesh.width,
-                        mesh.height,
-                        mesh.vertices_params,
-                        mesh.edges_params,
-                        mesh.faces_params,
-                        self.vertices_target,
-                        self.edges_target,
-                        self.faces_target,
-                        self.loss_function_inner,
-                        self.loss_function_outer,
-                        self.inner_solver,
-                        self.outer_solver,
-                        self.min_dist_T1,
-                        self.max_nb_iterations,
-                        self.tolerance,
-                        self.patience,
-                        selected_vertices,
-                        selected_edges,
-                        selected_faces,
-                        self.image_target,
-                        self.beta,
-                        self._update_T1_func,
-                    )
+                    if self.persist_outer_state:
+                        (
+                            mesh.vertices_params,
+                            mesh.edges_params,
+                            mesh.faces_params,
+                            self._outer_opt_state,
+                        ) = outer_eq_prop_with_state(
+                            mesh.vertices,
+                            mesh.edges,
+                            mesh.faces,
+                            mesh.width,
+                            mesh.height,
+                            mesh.vertices_params,
+                            mesh.edges_params,
+                            mesh.faces_params,
+                            self.vertices_target,
+                            self.edges_target,
+                            self.faces_target,
+                            self.loss_function_inner,
+                            self.loss_function_outer,
+                            self.inner_solver,
+                            self.outer_solver,
+                            self.min_dist_T1,
+                            self.max_nb_iterations,
+                            self.tolerance,
+                            self.patience,
+                            selected_vertices,
+                            selected_edges,
+                            selected_faces,
+                            self.image_target,
+                            self.beta,
+                            self._outer_opt_state,
+                            self._update_T1_func,
+                            self.params_regularizer,
+                            self.ep_variant,
+                        )
+                    else:
+                        (
+                            mesh.vertices_params,
+                            mesh.edges_params,
+                            mesh.faces_params,
+                        ) = outer_eq_prop(
+                            mesh.vertices,
+                            mesh.edges,
+                            mesh.faces,
+                            mesh.width,
+                            mesh.height,
+                            mesh.vertices_params,
+                            mesh.edges_params,
+                            mesh.faces_params,
+                            self.vertices_target,
+                            self.edges_target,
+                            self.faces_target,
+                            self.loss_function_inner,
+                            self.loss_function_outer,
+                            self.inner_solver,
+                            self.outer_solver,
+                            self.min_dist_T1,
+                            self.max_nb_iterations,
+                            self.tolerance,
+                            self.patience,
+                            selected_vertices,
+                            selected_edges,
+                            selected_faces,
+                            self.image_target,
+                            self.beta,
+                            self._update_T1_func,
+                            self.params_regularizer,
+                            self.ep_variant,
+                        )
 
                 case BilevelOptimizationMethod.IMPLICIT_DIFFERENTIATION:
                     (
@@ -258,6 +299,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                         selected_faces,
                         self.image_target,
                         self._update_T1_func,
+                        self.params_regularizer,
                     )
 
                 case BilevelOptimizationMethod.ADJOINT_STATE:
@@ -290,6 +332,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                         selected_faces,
                         self.image_target,
                         self._update_T1_func,
+                        self.params_regularizer,
                     )
 
                 case _:

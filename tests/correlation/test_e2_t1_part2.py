@@ -7,6 +7,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
 
+import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -81,7 +82,6 @@ def create_optimizer() -> PbcBilevelOptimizer:
     bop.outer_solver = optax.adam(learning_rate=0.0001, nesterov=True)
     bop.bilevel_optimization_method = BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION
     bop.loss_function_outer = cost_v2v
-    # bop.loss_function_outer = cost_v2v_ias
     return bop
 
 
@@ -101,10 +101,25 @@ def load_tensions_target() -> Array:
     return jnp.asarray(init_values_target)
 
 
+def _require_part1_outputs() -> None:
+    """Skip, rather than fail, when `test_e2_t1.py` has not produced its outputs in this run."""
+    needed = Path("tests/_outputs/e2_t1/meshes_data")
+    if not needed.is_dir() or not any(needed.glob("mesh*.npz")):
+        pytest.skip("requires tests/correlation/test_e2_t1.py to have run first "
+                    "(both are marked `long`); run the long set to exercise this")
+
+
+# MARKED `long` for the same reason as part 1. The two are coupled through files on disk:
+# deselecting part 1 would otherwise make this fail with FileNotFoundError -- a missing
+# prerequisite reported as a test failure, which is the least useful of the available signals --
+# so `_require_part1_outputs` makes it SKIP instead.
+@pytest.mark.long
 def test_pearson_e2_t1() -> None:
+    _require_part1_outputs()
+
     """Check identical result of a standard test with previous results (november 2025)."""
     t_start = perf_counter()
-    Path("tests/correlation/results").mkdir(exist_ok=True)
+    Path("tests/_outputs/e2_t1").mkdir(parents=True, exist_ok=True)
     nb_epochs = 10000
     MAX_EDGES_IN_ANY_FACE = 20
     areas_target = load_areas_target()
@@ -133,7 +148,7 @@ def test_pearson_e2_t1() -> None:
 
     he_params_reference = target_he_params[0]
 
-    mesh = PbcMesh.load_mesh("tests/correlation/results_AD_working/meshes_data/mesh_epoch_1500.npz")
+    mesh = PbcMesh.load_mesh("tests/_outputs/e2_t1/meshes_data/mesh_epoch_1500.npz")
 
     # Energy functions : Note that they use the width and height parameters now, defined earlier
     def area_part(face: Array, _face_param: Array, vertTable: Array, heTable: Array, faceTable: Array) -> Array:
@@ -169,11 +184,11 @@ def test_pearson_e2_t1() -> None:
     # Energy minimization (init cond equilibrium)
     bop.loss_function_inner = energy
     bop.inner_optimization(mesh_target)
-    plot_mesh(mesh, show=False, save=True, save_path="tests/correlation/results/base_mesh.png", title="Base mesh")
+    plot_mesh(mesh, show=False, save=True, save_path="tests/_outputs/e2_t1/base_mesh.png", title="Base mesh")
     plot_mesh(
-        mesh_target, show=False, save=True, save_path="tests/correlation/results/target_mesh.png", title="Target mesh"
+        mesh_target, show=False, save=True, save_path="tests/_outputs/e2_t1/target_mesh.png", title="Target mesh"
     )
-    mesh_target.save_mesh("tests/correlation/results/target_mesh.npz")
+    mesh_target.save_mesh("tests/_outputs/e2_t1/target_mesh.npz")
 
     bop.vertices_target = mesh_target.vertices.copy()
     bop.edges_target = mesh_target.edges.copy()
@@ -190,7 +205,7 @@ def test_pearson_e2_t1() -> None:
         save_plotmesh_every=10,
         save_mesh_data_every=10,
         also_report_to_stdout=True,
-        save_folder="tests/correlation/results",
+        save_folder="tests/_outputs/e2_t1",
     )
     # for j in range(epochs + 1):
     #     t1 = perf_counter()
@@ -229,7 +244,7 @@ def test_pearson_e2_t1() -> None:
 def read_result() -> None:
     """Demonstrates how to extract tension data from saved meshes."""
     # First get all mesh filenames.
-    mesh_filenames = Path("tests/correlation/results/meshes_data/").glob("mesh*.npz")
+    mesh_filenames = Path("tests/_outputs/e2_t1/meshes_data/").glob("mesh*.npz")
     # Load mesh file and extract in particular the tensions (edges params)
     tensions = [PbcMesh.load_mesh(str(filename)).edges_params for filename in mesh_filenames]
     print(tensions[0])

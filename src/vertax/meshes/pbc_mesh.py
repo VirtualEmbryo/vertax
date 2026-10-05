@@ -66,7 +66,12 @@ class PbcMesh(Mesh):
         """
         key = jax.random.PRNGKey(random_key)
         seeds = jnp.array((width, height)) * jax.random.uniform(key, (nb_seeds, 2))
-        return cls.from_seeds(seeds, width, height)
+        try:
+            return cls.from_seeds(seeds, width, height)
+        except _FaceOrderingError as exc:
+            # `_make_he_structure` cannot name the seed, and the seed is what a caller varies.
+            msg = f"{exc} Reached from from_random_seeds(nb_seeds={nb_seeds}, random_key={random_key})."
+            raise _FaceOrderingError(msg) from exc
 
     @classmethod
     def from_seeds(cls, seeds: Array, width: float, height: float) -> Self:
@@ -124,6 +129,29 @@ class PbcMesh(Mesh):
 
         Returns:
             Self: The corresponding mesh.
+        
+        .. warning::
+
+            **Junction extraction is unreliable on real masks, and this method is currently
+            unsupported for them.** It builds the mesh with
+            `mask_analysis.find_vertices_edges_faces`, which keeps a label triple only where
+            exactly one 2x2 window carries it. A real trijunction is generally a small cluster of
+            windows, so genuine junctions are discarded and spurious short cycles close in their
+            place.
+
+            MEASURED on `examples/image.tif`, the image shipped with this method's own example:
+            `V - E + F = 55` and **472 faces from 64 segmented cells**. On a raw microscopy crop,
+            `V - E + F = 6`. A correct planar mesh gives 0.
+
+            For a segmented tissue, use :mod:`vertax.trace` instead, which extracts junctions on the
+            pixel-corner lattice and is tested against a stored reference.
+
+            **The gap is real and `vertax.trace` does not close it.** `trace` produces a *clamped
+            patch* -- a finite tissue fragment with a boundary -- not a periodic mesh. There is
+            currently **no working route from an image to a periodic mesh**. Substituting the
+            corner-lattice extraction here is the intended fix; it is deferred, and its three
+            preconditions are recorded in the freeze checklist.
+
         """
         return cls.from_mask(mask_from_image(image))
 
@@ -141,6 +169,29 @@ class PbcMesh(Mesh):
 
         Returns:
             Self: The corresponding mesh.
+        
+        .. warning::
+
+            **Junction extraction is unreliable on real masks, and this method is currently
+            unsupported for them.** It builds the mesh with
+            `mask_analysis.find_vertices_edges_faces`, which keeps a label triple only where
+            exactly one 2x2 window carries it. A real trijunction is generally a small cluster of
+            windows, so genuine junctions are discarded and spurious short cycles close in their
+            place.
+
+            MEASURED on `examples/image.tif`, the image shipped with this method's own example:
+            `V - E + F = 55` and **472 faces from 64 segmented cells**. On a raw microscopy crop,
+            `V - E + F = 6`. A correct planar mesh gives 0.
+
+            For a segmented tissue, use :mod:`vertax.trace` instead, which extracts junctions on the
+            pixel-corner lattice and is tested against a stored reference.
+
+            **The gap is real and `vertax.trace` does not close it.** `trace` produces a *clamped
+            patch* -- a finite tissue fragment with a boundary -- not a periodic mesh. There is
+            currently **no working route from an image to a periodic mesh**. Substituting the
+            corner-lattice extraction here is the intended fix; it is deferred, and its three
+            preconditions are recorded in the freeze checklist.
+
         """
         padded_mask = pad(mask, save=False, output_path="refined_and_padded_image.tiff")
         # Find vertices, edges, faces
@@ -344,7 +395,7 @@ class PbcMesh(Mesh):
         mesh.vertices_params = jnp.array(mesh_file["vertices_params"])
         mesh.edges_params = jnp.array(mesh_file["edges_params"])
         mesh.faces_params = jnp.array(mesh_file["faces_params"])
-        mesh.MAX_EDGES_IN_ANY_FACE = mesh_file["MAX_EDGES_IN_ANY_FACE"]
+        mesh.MAX_EDGES_IN_ANY_FACE = int(mesh_file["MAX_EDGES_IN_ANY_FACE"])
         return mesh
 
     def save_mesh_txt(
@@ -424,12 +475,21 @@ class PbcMesh(Mesh):
         dirpath.mkdir(parents=True, exist_ok=True)
 
         mesh = cls._create()
+        # Index tables are WRITTEN by `np.savetxt` in float notation ('0.00...e+00'), so reading
+        # them with `dtype=np.int64` makes numpy parse an integer via a float -- a
+        # DeprecationWarning that this project's `filterwarnings = ["error"]` turns into a hard
+        # error, which is why this loader had no test. Read as float and cast, which also keeps
+        # every file written by earlier versions readable.
         mesh.vertices = jnp.array(np.loadtxt(dirpath / vertices_filename, dtype=np.float64))
-        mesh.edges = jnp.array(np.loadtxt(dirpath / edges_filename, dtype=np.int64))
-        mesh.faces = jnp.array(np.loadtxt(dirpath / faces_filename, dtype=np.int64))
+        mesh.edges = jnp.array(np.loadtxt(dirpath / edges_filename, dtype=np.float64).astype(np.int64))
+        mesh.faces = jnp.array(np.loadtxt(dirpath / faces_filename, dtype=np.float64).astype(np.int64))
+        # `edges_params` and `faces_params` are PHYSICAL PARAMETERS (tensions, target areas,
+        # shape factors), never indices, so they must be read as float: reading them with
+        # `dtype=np.int64` silently truncates -- a tension field of mean 1 and spread 0.1
+        # round-trips to all-ones, destroying the whole signal. See tests/test_mesh_txt_roundtrip.py.
         mesh.vertices_params = jnp.array(np.loadtxt(dirpath / vertices_params_filename, dtype=np.float64))
-        mesh.edges_params = jnp.array(np.loadtxt(dirpath / edges_params_filename, dtype=np.int64))
-        mesh.faces_params = jnp.array(np.loadtxt(dirpath / faces_params_filename, dtype=np.int64))
+        mesh.edges_params = jnp.array(np.loadtxt(dirpath / edges_params_filename, dtype=np.float64))
+        mesh.faces_params = jnp.array(np.loadtxt(dirpath / faces_params_filename, dtype=np.float64))
         with (dirpath / constants_filename).open("r") as f:
             numbers = f.readline().split()
             mesh.width = float(numbers[0])
@@ -645,6 +705,14 @@ def _make_periodic(  # noqa: C901
     )
 
 
+class _FaceOrderingError(RuntimeError):
+    """The per-face edge-ordering walk in `_make_he_structure` cannot terminate.
+
+    Subclasses `RuntimeError` so that any caller already catching `RuntimeError` still catches this.
+    Private: it is a diagnostic for a construction that can hang, not a new public API.
+    """
+
+
 def _make_he_structure(  # noqa: C901
     width: float,
     height: float,
@@ -679,14 +747,58 @@ def _make_he_structure(  # noqa: C901
 
     # Finding clockwise (or counterclockwise) half edge set for each face
     ordered_edges_periodic_faces = []
-    for face in periodic_faces:
+    for face_index, face in enumerate(periodic_faces):
         edges_face = [(f1, f2) for f1 in face for f2 in face if (f1, f2) in periodic_edges]
         i = 0
         start_edge = edges_face[i]
         ordered_face = [start_edge]
         e = start_edge
         visited = [e]
+        # BOUND AND RAISE. The walk advances with `edges_face[i % len(face)]`: the
+        # modulus is taken over `face` -- the face's VERTICES -- while the list being indexed is
+        # `edges_face`, the vertex pairs of that face that are also edges. Termination requires
+        # every element of `edges_face` to be visited, but only indices 0 .. len(face)-1 are
+        # reachable, so when `len(edges_face) > len(face)` the condition can never be satisfied and
+        # this loop runs forever -- with no exception, no warning, and no output.
+        #
+        # The bound below cannot change any mesh that currently builds. Termination already implies
+        # `len(edges_face) == len(face)` (each of the n vertices' induced edges must be reachable
+        # within n indices, and an n-gon's vertex set induces at least its own n boundary edges), and
+        # a terminating walk needs at most O(len(face)^2) steps because each of the n appends costs
+        # at most one cyclic scan. Measured, not just deduced: the invariant
+        # `len(edges_face) == len(face)` holds on every seed case and every face of every committed
+        # synthetic mesh that builds, and fails on every case that hangs; see
+        # tests/test_pbc_mesh_face_ordering.py.
+        #
+        # This converts an unbounded silent hang into an actionable error. It deliberately does NOT
+        # change the modulus: where a chord exists, walking `edges_face` can emit a truncated or
+        # self-intersecting `ordered_face`, and `geo.get_area` takes `0.5*|shoelace|`, which accepts
+        # both silently -- the `get_area_bounded` failure mode. Fixing that needs a geometric
+        # decision, with an acceptance test on `clamped.signed_face_areas`, not `|shoelace|`.
+        max_steps = 8 * len(face) ** 2 + 64
+        steps = 0
         while sorted(edges_face) != sorted(visited):
+            if steps >= max_steps:
+                surplus = len(edges_face) - len(face)
+                msg = (
+                    f"PbcMesh face ordering did not terminate for face index {face_index} after "
+                    f"{max_steps} steps. len(face) = {len(face)} vertices but len(edges_face) = "
+                    f"{len(edges_face)} induced edges; termination requires these to be EQUAL, "
+                    f"because the walk advances with `edges_face[i % len(face)]` and can only reach "
+                    f"indices 0..{len(face) - 1}. "
+                    + (f"The {surplus} surplus entries are CHORDS: edges joining two vertices of "
+                       f"this face that are not its own boundary edges -- what a degenerate Voronoi "
+                       f"cell produces at low cell counts. " if surplus > 0 else
+                       f"The deficit is {-surplus}: a boundary edge of this face is missing from "
+                       f"the edge list. ")
+                    + f"Offending face vertex set: {sorted(face)}. Box {width} x {height}. "
+                    f"Measured incidence: 0/189 seed cases that build "
+                    f"violate the invariant, 211/211 that hang do, and nb_seeds >= 50 did not hang "
+                    f"in 120 cases -- so raise nb_seeds, move the aspect ratio toward 1:1, or pick "
+                    f"another random_key."
+                )
+                raise _FaceOrderingError(msg)
+            steps += 1
             if e[0] == start_edge[1] and e not in visited:
                 ordered_face.append(e)
                 start_edge = e

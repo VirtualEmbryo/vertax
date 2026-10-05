@@ -10,14 +10,17 @@ import optax
 
 from vertax import BoundedBilevelOptimizer, BoundedMesh
 from vertax.cost import cost_ratio
-from vertax.energy import energy_line_tensions_bounded
+from vertax.energy import make_energy_line_tensions_bounded
 from vertax.method_enum import BilevelOptimizationMethod
 
+# legacy bounded convention, pinned for regression
+_ENERGY_BOUNDED_LEGACY = make_energy_line_tensions_bounded(40.0, sigmoid_tensions=True)
+
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 
-def test_n_bilevel_opt() -> None:
+def test_n_bilevel_opt(tmp_path: Path) -> None:
     """Check the whole function of n bilevel opt which makes a lot of things."""
     # Settings
     n_cells = 20
@@ -45,10 +48,11 @@ def test_n_bilevel_opt() -> None:
     rng = np.random.default_rng(seed=rng_seed)
     bounded_mesh.vertices_params = jnp.asarray([0.0 for _ in range(bounded_mesh.nb_vertices)])
     bounded_mesh.edges_params = jnp.asarray(rng.random(n_edges) * 20 - 10)
-    bounded_mesh.faces_params = jnp.asarray([0.0 for _ in range(bounded_mesh.nb_faces)])
+    # legacy bounded convention, pinned for regression
+    bounded_mesh.faces_params = jnp.asarray([0.6 for _ in range(bounded_mesh.nb_faces)])
 
     # Energy minimization (init cond equilibrium)
-    bilevel_optimizer.loss_function_inner = energy_line_tensions_bounded
+    bilevel_optimizer.loss_function_inner = _ENERGY_BOUNDED_LEGACY
     bilevel_optimizer.inner_optimization(mesh=bounded_mesh)
     # If you want to select only a subset of vertices, edges, and faces, it's possible:
     # pbc_mesh.inner_opt(
@@ -60,7 +64,7 @@ def test_n_bilevel_opt() -> None:
 
     def energy_metric(mesh: BoundedMesh, _bilevel_opt: BoundedBilevelOptimizer) -> float:
         return float(
-            energy_line_tensions_bounded(
+            _ENERGY_BOUNDED_LEGACY(
                 mesh.vertices,
                 mesh.angles,
                 mesh.edges,
@@ -86,9 +90,12 @@ def test_n_bilevel_opt() -> None:
         also_report_to_stdout=True,
         save_plotmesh_every=10,
         save_mesh_data_every=10,
-        save_folder="test_n_bilevel_bounded",
+        save_folder=str(tmp_path / "n_bilevel_bounded"),
     )
 
 
 if __name__ == "__main__":
-    test_n_bilevel_opt()
+    import tempfile
+    from pathlib import Path
+
+    test_n_bilevel_opt(Path(tempfile.mkdtemp()))

@@ -12,10 +12,11 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
+import pytest
 from jax import vmap
 from numpy.typing import NDArray
 
-from vertax import EdgePlot, FacePlot, PbcBilevelOptimizer, PbcMesh, cost_v2v, nonlinear_cg, plot_mesh
+from vertax import EdgePlot, FacePlot, PbcBilevelOptimizer, PbcMesh, cost_v2v, plot_mesh
 from vertax.geo import get_area, get_length
 from vertax.method_enum import BilevelOptimizationMethod
 
@@ -79,12 +80,14 @@ def create_optimizer() -> PbcBilevelOptimizer:
     bop.max_nb_iterations = 1000
     bop.tolerance = 0.00001
     bop.patience = 5
-    # bop.inner_solver = optax.sgd(learning_rate=0.01)
-    bop.inner_solver = nonlinear_cg(restart_every=10)
+    # `cg_linesearch` is excluded from the public release and unused by every figure. SGD is the
+    # inner solver behind every committed figure number.
+    # NOTE: neither variant has been run to completion, so this test's pass status is unverified
+    # in both.
+    bop.inner_solver = optax.sgd(learning_rate=0.01)
     bop.outer_solver = optax.adam(learning_rate=0.0001, nesterov=True)
     bop.bilevel_optimization_method = BilevelOptimizationMethod.ADJOINT_STATE
     bop.loss_function_outer = cost_v2v
-    # bop.loss_function_outer = cost_v2v_ias
     return bop
 
 
@@ -170,10 +173,15 @@ def _expected_result() -> None:
     plt.show()
 
 
+# This test runs `nb_epochs = 10000` bilevel epochs and takes over 65 minutes. It is MARKED
+# `long` rather than REDUCED on purpose: the Pearson value it asserts is reached *because of*
+# the epoch budget, so shrinking the budget would silently weaken the claim instead of
+# speeding up the same test. Run the `long` set deliberately, not on every invocation.
+@pytest.mark.long
 def test_pearson_e2_t1() -> None:
     """Check identical result of a standard test with previous results (november 2025)."""
     t_start = perf_counter()
-    Path("tests/correlation/results").mkdir(exist_ok=True)
+    Path("tests/_outputs/e2_t1").mkdir(parents=True, exist_ok=True)
     nb_epochs = 10000
     MAX_EDGES_IN_ANY_FACE = 20
     areas_target = load_areas_target()
@@ -247,11 +255,11 @@ def test_pearson_e2_t1() -> None:
     bop.loss_function_inner = energy
     bop.inner_optimization(mesh_target)
     bop.inner_optimization(mesh)
-    plot_mesh(mesh, show=False, save=True, save_path="tests/correlation/results/base_mesh.png", title="Base mesh")
+    plot_mesh(mesh, show=False, save=True, save_path="tests/_outputs/e2_t1/base_mesh.png", title="Base mesh")
     plot_mesh(
-        mesh_target, show=False, save=True, save_path="tests/correlation/results/target_mesh.png", title="Target mesh"
+        mesh_target, show=False, save=True, save_path="tests/_outputs/e2_t1/target_mesh.png", title="Target mesh"
     )
-    mesh_target.save_mesh("tests/correlation/results/target_mesh.npz")
+    mesh_target.save_mesh("tests/_outputs/e2_t1/target_mesh.npz")
 
     bop.vertices_target = mesh_target.vertices.copy()
     bop.edges_target = mesh_target.edges.copy()
@@ -268,7 +276,7 @@ def test_pearson_e2_t1() -> None:
         save_plotmesh_every=100,
         save_mesh_data_every=100,
         also_report_to_stdout=True,
-        save_folder="tests/correlation/results",
+        save_folder="tests/_outputs/e2_t1",
     )
 
     t_end = perf_counter()
@@ -279,7 +287,7 @@ def test_pearson_e2_t1() -> None:
 def read_result() -> None:
     """Demonstrates how to extract tension data from saved meshes."""
     # First get all mesh filenames.
-    mesh_filenames = Path("tests/correlation/results/meshes_data/").glob("mesh*.npz")
+    mesh_filenames = Path("tests/_outputs/e2_t1/meshes_data/").glob("mesh*.npz")
     # Load mesh file and extract in particular the tensions (edges params)
     tensions = [PbcMesh.load_mesh(str(filename)).edges_params for filename in mesh_filenames]
     print(tensions[0])
@@ -291,7 +299,7 @@ def show_tensions() -> None:
     """Find why an edge doesn't do good with IAS."""
     for i in range(30):
         step = 0 + 10 * i
-        mesh = PbcMesh.load_mesh(f"tests/correlation/results/meshes_data/mesh_epoch_{step}.npz")
+        mesh = PbcMesh.load_mesh(f"tests/_outputs/e2_t1/meshes_data/mesh_epoch_{step}.npz")
         plot_mesh(
             mesh,
             edge_plot=EdgePlot.EDGE_PARAMETER,
@@ -300,10 +308,10 @@ def show_tensions() -> None:
             title=f"Step {step} tensions",
             show=False,
             save=True,
-            save_path=f"tests/correlation/results/tensions/mesh_epoch_{step}.png",
+            save_path=f"tests/_outputs/e2_t1/tensions/mesh_epoch_{step}.png",
             # forced_edge_scale=(0,2.)
         )
-    # target_mesh = PbcMesh.load_mesh("tests/correlation/results_part1/target_mesh.npz")
+    # target_mesh = PbcMesh.load_mesh("tests/_outputs/e2_t1_part1/target_mesh.npz")
     # plot_mesh(
     #     target_mesh,
     #     edge_plot=EdgePlot.EDGE_PARAMETER,
