@@ -5,7 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "vertax"
 version = "0.2.0"
-license = { file = "LICENSE" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE", "AUTHORS"]
 description = "Optimization of vertex models."
 authors = [
   { name = "Turlier lab", email = "herve.turlier@college-de-france.fr" },
@@ -14,7 +15,7 @@ maintainers = [
   { name = "Herve Turlier", email = "herve.turlier@college-de-france.fr" },
 ]
 # Contributors, alphabetical: Jim Catacora Ocana, Alessandro Pasqui, Anshuman Sinha,
-# Herve Turlier. Attribution is kept as a group here and in LICENSE so that it does not
+# Herve Turlier. Attribution is kept as a group here and in AUTHORS so that it does not
 # have to be re-ranked; see https://www.turlierlab.com.
 readme = "README.md"
 requires-python = ">=3.11"
