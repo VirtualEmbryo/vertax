@@ -118,12 +118,27 @@ UpdateT1Func = Callable[
 ]
 
 
+def _with_incoming_integer_dtypes(new_state, old_state):  # noqa: ANN001, ANN202
+    """Cast an integer leaf of ``new_state`` to the dtype of the same leaf of ``old_state`` where they differ.
+
+    Under ``jax_enable_x64`` the zoom line search of ``optax.lbfgs()`` returns an int64 step counter
+    where it was initialised with int32, and ``lax.cond`` in the loop requires identical types. The
+    comparison is made at trace time, so a solver whose dtypes already match gets no extra operation.
+    """
+    def cast(new, old):  # noqa: ANN001, ANN202
+        if hasattr(new, "dtype") and jnp.issubdtype(new.dtype, jnp.integer) and new.dtype != old.dtype:
+            return new.astype(old.dtype)
+        return new
+
+    return jax.tree.map(cast, new_state, old_state)
+
+
 ###############################
 ## AUTOMATIC DIFFERENTIATION ##
 ###############################
 
 
-@partial(jit, static_argnums=(9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20))
+@partial(jit, static_argnums=(9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21))
 def _jit_minimize(  # noqa: C901
     vertTable: Array,
     heTable: Array,
@@ -146,6 +161,7 @@ def _jit_minimize(  # noqa: C901
     update_t1_func: UpdateT1Func = update_T1,
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
+    reset_solver_on_t1: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     x0: Array = [vertTable, heTable, faceTable, vert_params, he_params, face_params][optimization_target.value]
     sel: Array = [
@@ -306,6 +322,7 @@ def _jit_minimize(  # noqa: C901
             grad=grads,  # ty:ignore[unknown-argument]
             value_fn=value_fn,  # ty:ignore[unknown-argument]
         )
+        new_opt_state = _with_incoming_integer_dtypes(new_opt_state, opt_state)
 
         # Apply updates to the chosen array on selected indices
         updates_sel = updates.at[sel].get()
@@ -363,6 +380,7 @@ def _jit_minimize(  # noqa: C901
         ht = lax.cond(is_running, lambda: new_ht_pbc, lambda: ht)
         ft = lax.cond(is_running, lambda: new_ft_pbc, lambda: ft)
 
+        ht_before_t1 = ht
         new_vt_T1, new_ht_T1, new_ft_T1 = update_t1_func(
             vt,
             ht,
@@ -382,6 +400,15 @@ def _jit_minimize(  # noqa: C901
         vt = lax.cond(is_running, lambda: new_vt_T1, lambda: vt)
         ht = lax.cond(is_running, lambda: new_ht_T1, lambda: ht)
         ft = lax.cond(is_running, lambda: new_ft_T1, lambda: ft)
+
+        # A T1 transition changes the mesh the solver state describes: CG's conjugate direction and
+        # the curvature pairs of L-BFGS refer to the old topology and vertex positions. Opt-in reset
+        # of the solver state to its initial value at the new positions whenever the topology has
+        # changed; integer and float leaves keep their dtypes so that the state type is stable.
+        if reset_solver_on_t1 and argnums == 0:
+            topology_changed = is_running & jnp.any(ht != ht_before_t1)
+            fresh = jax.tree.map(lambda new, old: new.astype(old.dtype), solver.init(vt), opt_state)
+            opt_state = lax.cond(topology_changed, lambda: fresh, lambda: opt_state)
 
         # Shift prev_L_values
         new_prev_L_values = prev_L_values.at[1:].set(prev_L_values[:-1])
@@ -453,8 +480,19 @@ def minimize(
     update_t1_func: UpdateT1Func = update_T1,
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
+    reset_solver_on_t1: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     """General minimization function.
+
+    Supported solvers: any ``optax.GradientTransformation``. Fixed-step solvers (``optax.sgd``,
+    ``optax.adam``) use the gradient only. Line-search solvers -- ``vertax.cg.cg_linesearch``
+    (nonlinear conjugate gradient), ``vertax.cg.gd_linesearch`` (steepest descent with a Wolfe line
+    search) and ``optax.lbfgs()`` -- also need the energy and a callable to re-evaluate it, which
+    this loop passes to ``solver.update`` as ``value``, ``grad`` and ``value_fn`` at every step. Use
+    ``cap_vertex_step=True`` with them, and ``reset_solver_on_t1=True`` with ``optax.lbfgs()``,
+    whose curvature pairs otherwise outlive the topology they were measured on. A solver whose state
+    holds integers needs a fixed integer dtype under ``jax_enable_x64`` (``cg_linesearch`` and
+    ``gd_linesearch`` do; ``optax.lbfgs()`` does).
 
     Args:
         cap_vertex_step: Clip each per-step vertex displacement to
@@ -462,6 +500,9 @@ def minimize(
             (cg_linesearch, gd_linesearch, lbfgs), which choose their own step size
             and can otherwise move a vertex across whole cells in one iteration.
             Off by default, so fixed-step solvers (adam, sgd) are untouched.
+        reset_solver_on_t1: Re-initialise the solver state at the new vertex positions after
+            every iteration whose T1 step changed the topology (vertex optimisation only). Off by
+            default.
     """
     # ensure width and height are hashable...
     width = float(width)
@@ -501,6 +542,7 @@ def minimize(
             update_t1_func=update_t1_func,
             perform_energy_check=perform_energy_check,
             cap_vertex_step=cap_vertex_step,
+            reset_solver_on_t1=reset_solver_on_t1,
         )
     )
 
