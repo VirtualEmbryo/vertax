@@ -2,6 +2,22 @@
 
 ## Unreleased — changes since the merge base `ed504f2`
 
+### Solver and T1 options (defaults unchanged)
+
+- Nonlinear CG: integer state keeps its dtype under `jax_enable_x64` (fix);
+  `linesearch_initial_guess="one"` (opt-in; default `"keep"`) starts every line
+  search from a unit step.
+- `update_T1(..., reopen_margin=0.1)`: length of the reopened edge as a keyword
+  (default unchanged, `1.1 * min_dist_T1`).
+- Bounded mode: the arc half-angle limit is applied after every relaxation step,
+  also with T1 transitions disabled (fix).
+- `minimize(..., reset_solver_on_t1=True)`: opt-in reset of the solver state after
+  a T1 transition (default `False`); `optax.lbfgs()` now runs under
+  `jax_enable_x64` (fix).
+- `minimize(..., count_t1=True)`: opt-in T1 counts in the loop state, exact under
+  `jit`, `vmap` and `grad` (default `False`); `recording_t1_statistics()` collects
+  them from the bilevel estimators.
+
 ### New modules
 
 - **`vertax.trace`**: traces a segmentation label mask, including a raw crop,

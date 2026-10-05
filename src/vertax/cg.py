@@ -63,6 +63,23 @@ import optax
 import optax.tree_utils as otu
 
 
+def _keep_integer_dtypes(new_state: Any, old_state: Any) -> Any:  # noqa: ANN401
+    """Cast every integer leaf of ``new_state`` back to the dtype of the same leaf in ``old_state``.
+
+    Under ``jax_enable_x64`` the zoom line search returns an integer counter of a different width from
+    the one it was initialised with. Loops that select between two solver states with ``lax.cond``
+    (``vertax.opt.minimize``) require both to have identical types, so the state must keep its dtypes
+    from one step to the next. The cast changes no value.
+    """
+    return jax.tree.map(
+        lambda new, old: new.astype(old.dtype)
+        if hasattr(new, "dtype") and jnp.issubdtype(new.dtype, jnp.integer)
+        else new,
+        new_state,
+        old_state,
+    )
+
+
 class NonlinearCGState(NamedTuple):
     """State carried by the nonlinear CG solver between ``update`` calls."""
 
@@ -75,6 +92,7 @@ class NonlinearCGState(NamedTuple):
 def cg_linesearch(
     restart_every: int = 10,
     max_linesearch_steps: int = 20,
+    linesearch_initial_guess: str = "keep",
 ) -> optax.GradientTransformationExtraArgs:
     """Polak-Ribière nonlinear conjugate gradient with restarts + zoom line search.
 
@@ -83,12 +101,20 @@ def cg_linesearch(
             Smaller = more robust on strongly non-quadratic objectives, larger =
             longer conjugate runs.
         max_linesearch_steps: maximum zoom line-search iterations per step.
+        linesearch_initial_guess: step length from which each line search starts, passed to
+            ``optax.scale_by_zoom_linesearch`` as ``initial_guess_strategy``. ``"keep"`` (default)
+            starts from the last accepted step. Combined with a per-vertex step cap, one very short
+            accepted step can then persist and a single long call stalls; restarting the call
+            resets it. ``"one"`` starts every line search from a unit step and does not stall, at
+            the price of more energy evaluations per step.
 
     Returns:
         An ``optax`` solver. Its ``update`` requires ``value``, ``grad`` and
         ``value_fn`` keyword arguments (see module docstring).
     """
-    linesearch = optax.scale_by_zoom_linesearch(max_linesearch_steps=max_linesearch_steps)
+    linesearch = optax.scale_by_zoom_linesearch(
+        max_linesearch_steps=max_linesearch_steps, initial_guess_strategy=linesearch_initial_guess
+    )
 
     def init_fn(params: optax.Params) -> NonlinearCGState:
         return NonlinearCGState(
@@ -154,7 +180,7 @@ def cg_linesearch(
             dir_prev=d,
             ls_state=ls_state,
         )
-        return step_updates, new_state
+        return step_updates, _keep_integer_dtypes(new_state, state)
 
     return optax.GradientTransformationExtraArgs(init_fn, update_fn)  # ty:ignore[invalid-argument-type]
 
@@ -167,6 +193,7 @@ class GDLineSearchState(NamedTuple):
 
 def gd_linesearch(
     max_linesearch_steps: int = 20,
+    linesearch_initial_guess: str = "keep",
 ) -> optax.GradientTransformationExtraArgs:
     """Steepest descent with a zoom (Wolfe) line search for the step size.
 
@@ -186,8 +213,12 @@ def gd_linesearch(
     incompatible with the AUTOMATIC_DIFFERENTIATION bilevel method; the factory
     name contains ``"linesearch"`` so the guard in ``bilevelopt.py`` rejects the
     combination automatically.
+
+    ``linesearch_initial_guess`` has the meaning it has in :func:`cg_linesearch`.
     """
-    linesearch = optax.scale_by_zoom_linesearch(max_linesearch_steps=max_linesearch_steps)
+    linesearch = optax.scale_by_zoom_linesearch(
+        max_linesearch_steps=max_linesearch_steps, initial_guess_strategy=linesearch_initial_guess
+    )
 
     def init_fn(params: optax.Params) -> GDLineSearchState:
         return GDLineSearchState(ls_state=linesearch.init(params))
@@ -221,6 +252,6 @@ def gd_linesearch(
             grad=grad,
             value_fn=value_fn,
         )
-        return step_updates, GDLineSearchState(ls_state=ls_state)
+        return step_updates, _keep_integer_dtypes(GDLineSearchState(ls_state=ls_state), state)
 
     return optax.GradientTransformationExtraArgs(init_fn, update_fn)  # ty:ignore[invalid-argument-type]

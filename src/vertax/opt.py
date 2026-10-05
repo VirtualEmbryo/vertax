@@ -13,7 +13,9 @@ from jax import Array, grad, jacfwd, jit, jvp, lax
 from numpy.typing import ArrayLike
 from scipy.sparse.linalg import LinearOperator, minres
 
-from vertax.geo import update_pbc
+import contextlib
+
+from vertax.geo import get_length, update_pbc
 from vertax.method_enum import BilevelOptimizationMethod, EPVariant
 from vertax.topo import update_T1
 
@@ -118,12 +120,60 @@ UpdateT1Func = Callable[
 ]
 
 
+# ---- T1 statistics ----------------------------------------------------------------------------------
+# Counts of T1 decisions are carried in the loop state of ``_jit_minimize`` (``count_t1=True``), so they
+# are exact under ``jit``, ``vmap`` and ``jax.grad``. ``recording_t1_statistics`` collects them from every
+# relaxation the library runs inside the bilevel estimators, including the relaxation that automatic
+# differentiation unrolls (returned there as an auxiliary output of the differentiated cost).
+_T1_RECORDER: list | None = None
+
+
+@contextlib.contextmanager
+def recording_t1_statistics():  # noqa: ANN201
+    """Collect the per-iteration T1 counts of every relaxation run inside the block.
+
+    Yields a list to which one record is appended per relaxation, in call order: a dict with
+    ``counts``, an integer array of shape ``(iterations, 2)`` holding, per iteration, the edges presented
+    to the T1 detector (no longer than ``min_dist_T1``, neither cell a triangle) and the flips kept, and
+    ``source``, the library function that ran the relaxation. With T1 transitions enabled, rejected
+    flips are presented minus kept. Relaxations traced inside a caller's own ``jit``/``vmap``/``grad``
+    cannot be recorded this way: call ``minimize(..., count_t1=True)`` there and return the counts.
+    """
+    global _T1_RECORDER  # noqa: PLW0603
+    previous, _T1_RECORDER = _T1_RECORDER, []
+    try:
+        yield _T1_RECORDER
+    finally:
+        _T1_RECORDER = previous
+
+
+def _record_t1(counts: Array, steps: Array, source: str) -> None:
+    if _T1_RECORDER is None or isinstance(counts, jax.core.Tracer) or isinstance(steps, jax.core.Tracer):
+        return
+    _T1_RECORDER.append(dict(source=source, counts=np.asarray(counts)[: int(steps)]))
+
+
+def _with_incoming_integer_dtypes(new_state, old_state):  # noqa: ANN001, ANN202
+    """Cast an integer leaf of ``new_state`` to the dtype of the same leaf of ``old_state`` where they differ.
+
+    Under ``jax_enable_x64`` the zoom line search of ``optax.lbfgs()`` returns an int64 step counter
+    where it was initialised with int32, and ``lax.cond`` in the loop requires identical types. The
+    comparison is made at trace time, so a solver whose dtypes already match gets no extra operation.
+    """
+    def cast(new, old):  # noqa: ANN001, ANN202
+        if hasattr(new, "dtype") and jnp.issubdtype(new.dtype, jnp.integer) and new.dtype != old.dtype:
+            return new.astype(old.dtype)
+        return new
+
+    return jax.tree.map(cast, new_state, old_state)
+
+
 ###############################
 ## AUTOMATIC DIFFERENTIATION ##
 ###############################
 
 
-@partial(jit, static_argnums=(9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20))
+@partial(jit, static_argnums=(9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22))
 def _jit_minimize(  # noqa: C901
     vertTable: Array,
     heTable: Array,
@@ -146,7 +196,9 @@ def _jit_minimize(  # noqa: C901
     update_t1_func: UpdateT1Func = update_T1,
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
-) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
+    reset_solver_on_t1: bool = False,
+    count_t1: bool = False,
+) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, ...]]:
     x0: Array = [vertTable, heTable, faceTable, vert_params, he_params, face_params][optimization_target.value]
     sel: Array = [
         selected_verts,
@@ -193,7 +245,7 @@ def _jit_minimize(  # noqa: C901
             step_count,
             should_stop,
             L_list,
-        ) = carry
+        ) = carry[:12]
 
         # Determine if we are still running (i.e., not stopped)
         is_running = jnp.logical_not(should_stop)
@@ -306,6 +358,7 @@ def _jit_minimize(  # noqa: C901
             grad=grads,  # ty:ignore[unknown-argument]
             value_fn=value_fn,  # ty:ignore[unknown-argument]
         )
+        new_opt_state = _with_incoming_integer_dtypes(new_opt_state, opt_state)
 
         # Apply updates to the chosen array on selected indices
         updates_sel = updates.at[sel].get()
@@ -363,6 +416,15 @@ def _jit_minimize(  # noqa: C901
         ht = lax.cond(is_running, lambda: new_ht_pbc, lambda: ht)
         ft = lax.cond(is_running, lambda: new_ft_pbc, lambda: ft)
 
+        ht_before_t1 = ht
+        if count_t1:
+            # Edges presented to the T1 detector at this iteration, measured on the tables it receives:
+            # one half-edge per edge, no longer than min_dist_T1, neither of its two cells a triangle.
+            even = jnp.arange(0, ht.shape[0], 2)
+            he_even, twin_even = ht[even], ht[ht[even, 2]]
+            lengths = jax.vmap(lambda i: get_length(i, vt, ht, ft, width, height))(even)
+            admissible = (ht[he_even[:, 0], 0] != he_even[:, 1]) & (ht[twin_even[:, 0], 0] != twin_even[:, 1])
+            n_presented = jnp.sum((lengths <= min_dist_T1) & admissible).astype(jnp.int32)
         new_vt_T1, new_ht_T1, new_ft_T1 = update_t1_func(
             vt,
             ht,
@@ -382,6 +444,22 @@ def _jit_minimize(  # noqa: C901
         vt = lax.cond(is_running, lambda: new_vt_T1, lambda: vt)
         ht = lax.cond(is_running, lambda: new_ht_T1, lambda: ht)
         ft = lax.cond(is_running, lambda: new_ft_T1, lambda: ft)
+
+        if count_t1:
+            # A kept flip re-links both half-edges of the flipped edge (previous and next both change);
+            # the neighbouring half-edges change one link each.
+            n_kept = jnp.sum((ht[even, 0] != ht_before_t1[even, 0]) & (ht[even, 1] != ht_before_t1[even, 1]))
+            t1_counts = carry[12].at[i].set(
+                jnp.where(is_running, jnp.stack([n_presented, n_kept.astype(jnp.int32)]), 0))
+
+        # A T1 transition changes the mesh the solver state describes: CG's conjugate direction and
+        # the curvature pairs of L-BFGS refer to the old topology and vertex positions. Opt-in reset
+        # of the solver state to its initial value at the new positions whenever the topology has
+        # changed; integer and float leaves keep their dtypes so that the state type is stable.
+        if reset_solver_on_t1 and argnums == 0:
+            topology_changed = is_running & jnp.any(ht != ht_before_t1)
+            fresh = jax.tree.map(lambda new, old: new.astype(old.dtype), solver.init(vt), opt_state)
+            opt_state = lax.cond(topology_changed, lambda: fresh, lambda: opt_state)
 
         # Shift prev_L_values
         new_prev_L_values = prev_L_values.at[1:].set(prev_L_values[:-1])
@@ -406,6 +484,8 @@ def _jit_minimize(  # noqa: C901
             should_stop,
             L_list,
         )
+        if count_t1:
+            new_carry = (*new_carry, t1_counts)
         return new_carry, None
 
     # Call lax.scan
@@ -424,10 +504,15 @@ def _jit_minimize(  # noqa: C901
         L_in_list,
     )
 
+    if count_t1:
+        init_carry = (*init_carry, jnp.zeros((iterations_max, 2), dtype=jnp.int32))
+
     final_state, _ = lax.scan(scan_step, init_carry, xs=jnp.arange(iterations_max))  # ty:ignore[invalid-argument-type]
 
     # Unpack and return results (for slicing outside jit)
-    vt_f, ht_f, ft_f, vp_f, hp_f, fp_f, _, _, _, step_f, _, L_hist = final_state
+    vt_f, ht_f, ft_f, vp_f, hp_f, fp_f, _, _, _, step_f, _, L_hist = final_state[:12]
+    if count_t1:
+        return (vt_f, ht_f, ft_f, vp_f, hp_f, fp_f), (L_hist, step_f, final_state[12])  # ty:ignore[invalid-return-type]
     return (vt_f, ht_f, ft_f, vp_f, hp_f, fp_f), (L_hist, step_f)  # ty:ignore[invalid-return-type]
 
 
@@ -453,8 +538,20 @@ def minimize(
     update_t1_func: UpdateT1Func = update_T1,
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
-) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
+    reset_solver_on_t1: bool = False,
+    count_t1: bool = False,
+) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, ...]]:
     """General minimization function.
+
+    Supported solvers: any ``optax.GradientTransformation``. Fixed-step solvers (``optax.sgd``,
+    ``optax.adam``) use the gradient only. Line-search solvers -- ``vertax.cg.cg_linesearch``
+    (nonlinear conjugate gradient), ``vertax.cg.gd_linesearch`` (steepest descent with a Wolfe line
+    search) and ``optax.lbfgs()`` -- also need the energy and a callable to re-evaluate it, which
+    this loop passes to ``solver.update`` as ``value``, ``grad`` and ``value_fn`` at every step. Use
+    ``cap_vertex_step=True`` with them, and ``reset_solver_on_t1=True`` with ``optax.lbfgs()``,
+    whose curvature pairs otherwise outlive the topology they were measured on. A solver whose state
+    holds integers needs a fixed integer dtype under ``jax_enable_x64`` (``cg_linesearch`` and
+    ``gd_linesearch`` do; ``optax.lbfgs()`` does).
 
     Args:
         cap_vertex_step: Clip each per-step vertex displacement to
@@ -462,6 +559,13 @@ def minimize(
             (cg_linesearch, gd_linesearch, lbfgs), which choose their own step size
             and can otherwise move a vertex across whole cells in one iteration.
             Off by default, so fixed-step solvers (adam, sgd) are untouched.
+        reset_solver_on_t1: Re-initialise the solver state at the new vertex positions after
+            every iteration whose T1 step changed the topology (vertex optimisation only). Off by
+            default.
+        count_t1: Also return, as a third element of the history, an integer array of shape
+            ``(iterations_max, 2)``: per iteration, the edges presented to the T1 detector and the
+            flips kept (zero after the loop has stopped). Carried in the loop state, so exact under
+            ``jit``, ``vmap`` and ``jax.grad``; the relaxation itself is unchanged. Off by default.
     """
     # ensure width and height are hashable...
     width = float(width)
@@ -478,7 +582,7 @@ def minimize(
     iterations_max = int(iterations_max)
     patience = int(patience)
 
-    return jax.block_until_ready(
+    result = jax.block_until_ready(
         _jit_minimize(
             vertTable=vertTable,
             heTable=heTable,
@@ -501,8 +605,15 @@ def minimize(
             update_t1_func=update_t1_func,
             perform_energy_check=perform_energy_check,
             cap_vertex_step=cap_vertex_step,
+            reset_solver_on_t1=reset_solver_on_t1,
+            count_t1=count_t1 or _T1_RECORDER is not None,
         )
     )
+    if count_t1 or _T1_RECORDER is not None:
+        tables, (hist, steps, counts) = result
+        _record_t1(counts, steps, "minimize")
+        return (tables, (hist, steps, counts)) if count_t1 else (tables, (hist, steps))
+    return result
 
 
 def inner_opt(
@@ -585,8 +696,22 @@ def cost_ad(
     selected_faces: Array | None = None,
     image_target: Array | None = None,
     update_t1_func: UpdateT1Func = update_T1,
+    return_t1_counts: bool = False,
 ) -> Array:
-    """Automatic differentiation cost function."""
+    """Automatic differentiation cost function.
+
+    With ``return_t1_counts`` it returns ``(cost, (counts, steps))``, the T1 counts of the unrolled
+    relaxation (see ``minimize(count_t1=True)``) as an auxiliary output for ``grad(..., has_aux=True)``;
+    the relaxation is the same as ``inner_opt``'s.
+    """
+    if return_t1_counts:
+        (vertTable, heTable, faceTable, *_), (_hist, steps, counts) = minimize(
+            vertTable, heTable, faceTable, width, height, vert_params, he_params, face_params, L_in, solver_inner,
+            min_dist_T1, iterations_max=iterations_max, tolerance=tolerance, patience=patience,
+            selected_verts=selected_verts, selected_hes=selected_hes, selected_faces=selected_faces,
+            optimization_target=OptimizationTarget.VERTICES, update_t1_func=update_t1_func, count_t1=True)
+        return L_out(vertTable, heTable, faceTable, width, height, vertTable_target, heTable_target,
+                     faceTable_target, selected_verts, selected_hes, selected_faces, image_target), (counts, steps)
     (vertTable, heTable, faceTable), _loss = inner_opt(
         vertTable,
         heTable,
@@ -654,7 +779,9 @@ def outer_opt(
     params_regularizer: Callable | None = None,
 ) -> tuple[Array, Array, Array]:
     """Outer optimization for Automatic differentiation method."""
-    grad_verts, grad_hes, grad_faces = grad(cost_ad, argnums=(5, 6, 7))(
+    recording = _T1_RECORDER is not None
+    cost = partial(cost_ad, return_t1_counts=True) if recording else cost_ad
+    hypergradient = grad(cost, argnums=(5, 6, 7), has_aux=recording)(
         vertTable,
         heTable,
         faceTable,
@@ -679,6 +806,11 @@ def outer_opt(
         image_target,
         update_t1_func,
     )
+    if recording:
+        (grad_verts, grad_hes, grad_faces), (counts, steps) = hypergradient
+        _record_t1(counts, steps, "automatic differentiation")
+    else:
+        grad_verts, grad_hes, grad_faces = hypergradient
 
     # The mean-tension gauge (and any parameter-space regulariser) applies to EVERY estimator,
     # not only EP. The total objective is C(x*(theta)) + R(theta), so
@@ -814,7 +946,7 @@ def _minimize_ep(
     iterations_max = int(iterations_max)
     patience = int(patience)
 
-    return _jit_minimize(
+    result = _jit_minimize(
         vertTable=vertTable,
         heTable=heTable,
         faceTable=faceTable,
@@ -835,7 +967,13 @@ def _minimize_ep(
         optimization_target=OptimizationTarget.VERTICES,
         update_t1_func=update_t1_func,
         perform_energy_check=perform_energy_check,
+        count_t1=_T1_RECORDER is not None,
     )
+    if _T1_RECORDER is not None:
+        tables, (hist, steps, counts) = result
+        _record_t1(counts, steps, "equilibrium propagation")
+        return tables, (hist, steps)
+    return result
 
 
 def inner_eq_prop(
