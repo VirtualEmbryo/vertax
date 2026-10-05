@@ -29,7 +29,7 @@ for vertex modeling and inverse design of epithelial tissues.
 </b>
 <br><br>
 
-[![Typing SVG](https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=18&duration=2000&pause=1200&color=38C2FF&center=false&width=295&height=30&lines=%5C+Forward+Simulations;%5C+Parameter+Inference;%5C+Inverse+Mechanical+Design)](https://gitlab.college-de-france.fr/virtualembryo/vertax) <br><b>— all in one unified Python package.</b>
+[![Typing SVG](https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=18&duration=2000&pause=1200&color=38C2FF&center=false&width=295&height=30&lines=%5C+Forward+Simulations;%5C+Parameter+Inference;%5C+Inverse+Mechanical+Design)](https://github.com/VirtualEmbryo/VertAX) <br><b>— all in one unified Python package.</b>
 
 </td>
 </tr>
