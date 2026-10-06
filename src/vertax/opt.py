@@ -136,7 +136,8 @@ def recording_t1_statistics():  # noqa: ANN201
     ``counts``, an integer array of shape ``(iterations, 2)`` holding, per iteration, the edges presented
     to the T1 detector (no longer than ``min_dist_T1``, neither cell a triangle) and the flips kept, and
     ``source``, the library function that ran the relaxation. With T1 transitions enabled, rejected
-    flips are presented minus kept. Relaxations traced inside a caller's own ``jit``/``vmap``/``grad``
+    flips are presented minus kept, provided the flips of one iteration share no cell (see
+    ``minimize``, ``count_t1``). Relaxations traced inside a caller's own ``jit``/``vmap``/``grad``
     cannot be recorded this way: call ``minimize(..., count_t1=True)`` there and return the counts.
     """
     global _T1_RECORDER  # noqa: PLW0603
@@ -566,6 +567,12 @@ def minimize(
             ``(iterations_max, 2)``: per iteration, the edges presented to the T1 detector and the
             flips kept (zero after the loop has stopped). Carried in the loop state, so exact under
             ``jit``, ``vmap`` and ``jax.grad``; the relaxation itself is unchanged. Off by default.
+            "Presented" is exact. "Kept" is a count of edges whose two half-edges both had their
+            previous and next links changed, which equals the number of flips only when the flips of one
+            iteration share no cell: where neighbouring flips share a cell (possible under the forced
+            rule, which flips every presented edge), a presented edge that was not itself flipped can
+            have both links changed by its neighbours and be counted, so "kept" can differ from the
+            flips performed and rejected flips (presented minus kept) are then unreliable.
     """
     # ensure width and height are hashable...
     width = float(width)
@@ -879,7 +886,7 @@ def _loss_ep_static(
     return loss_inner + (beta * loss_outer)
 
 
-@partial(jit, static_argnums=(6, 10, 11, 17, 18, 19, 20, 21, 22, 23, 24, 25))
+@partial(jit, static_argnums=(6, 10, 11, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26))
 def _minimize_ep(
     vertTable: Array,
     heTable: Array,
@@ -907,7 +914,8 @@ def _minimize_ep(
     height: float = 1,
     update_t1_func: UpdateT1Func = update_T1,  # 22, 23, 24 : [STATIC]
     perform_energy_check: bool = False,  # 25 static
-) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
+    count_t1: bool = False,  # 26 static
+) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, ...]]:
     # 1. Helper: Bind the fixed arguments to the loss function.
     def loss_evaluated(vt: Array, ht: Array, ft: Array, vp: Array, hp: Array, fp: Array) -> Array:
         return loss_fn(
@@ -967,12 +975,10 @@ def _minimize_ep(
         optimization_target=OptimizationTarget.VERTICES,
         update_t1_func=update_t1_func,
         perform_energy_check=perform_energy_check,
-        count_t1=_T1_RECORDER is not None,
+        count_t1=count_t1,
     )
-    if _T1_RECORDER is not None:
-        tables, (hist, steps, counts) = result
-        _record_t1(counts, steps, "equilibrium propagation")
-        return tables, (hist, steps)
+    # With ``count_t1`` the history is ``(hist, steps, counts)``: the counts leave the jitted function as
+    # an output, so the caller (outside any trace) can record them.
     return result
 
 
@@ -1008,7 +1014,8 @@ def inner_eq_prop(
     # Call the JIT-compiled minimize function (defined in previous step)
     # We pass all targets and loss components so they can be bound
     # inside the static wrapper.
-    (vt_f, ht_f, ft_f, _vp_f, _hp_f, _fp_f), (L_hist_full, step_f_array) = _minimize_ep(
+    count_t1 = _T1_RECORDER is not None
+    (vt_f, ht_f, ft_f, _vp_f, _hp_f, _fp_f), (L_hist_full, step_f_array, *counts) = _minimize_ep(
         vertTable,
         heTable,
         faceTable,
@@ -1035,7 +1042,10 @@ def inner_eq_prop(
         height,
         update_t1_func,
         perform_energy_check=perform_energy_check,
+        count_t1=count_t1,
     )
+    if count_t1:
+        _record_t1(counts[0], step_f_array, "equilibrium propagation")
 
     # Convert the JAX array step_f to a Python integer for slicing
     step_f = step_f_array.item()

@@ -9,7 +9,8 @@ counting changes nothing the loop computes. Checked here:
   forward relaxation, through ``grad(..., has_aux=True)``;
 * under ``vmap`` the counts of each batch member equal those of its own relaxation;
 * ``recording_t1_statistics`` collects the counts of the relaxation that the automatic-differentiation
-  hypergradient unrolls.
+  hypergradient unrolls and of the two solves of the equilibrium-propagation hypergradient, without
+  changing either result.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from jax.experimental import enable_x64
 
 from vertax import PbcMesh
 from vertax.energy import make_energy_line_tensions
-from vertax.opt import OptimizationTarget, minimize, outer_opt, recording_t1_statistics
+from vertax.opt import OptimizationTarget, minimize, outer_eq_prop, outer_opt, recording_t1_statistics
 from vertax.cost import cost_v2v
 from vertax.topo import update_T1
 
@@ -120,3 +121,31 @@ def test_recorder_collects_the_automatic_differentiation_relaxation(tissue) -> N
     assert len(ad) == 1
     np.testing.assert_array_equal(ad[0]["counts"], forward[: len(ad[0]["counts"])])
     assert ad[0]["counts"][:, 1].sum() > 0
+
+
+def _ep_args(tissue, hp, beta: float = 1e-3):  # noqa: ANN001, ANN202
+    v = jnp.asarray(tissue.vertices, jnp.float64)
+    edges, faces = jnp.asarray(tissue.edges), jnp.asarray(tissue.faces)
+    return (v, edges, faces, WIDTH, HEIGHT, jnp.zeros(v.shape[0]), hp, jnp.ones(tissue.nb_faces), v, edges, faces,
+            _energy, cost_v2v, optax.sgd(0.01), optax.sgd(1e-3), MIN_DIST, 200, 0.0, 5, None, None, None, None,
+            beta)
+
+
+def test_recorder_collects_both_equilibrium_propagation_solves(tissue) -> None:  # noqa: ANN001
+    with enable_x64():
+        hp = _tensions(tissue)
+        args = _ep_args(tissue, hp)
+        plain = outer_eq_prop(*args)
+        with recording_t1_statistics() as rec:
+            recorded = outer_eq_prop(*args)
+        again = outer_eq_prop(*args)
+    ep = [r for r in rec if r["source"] == "equilibrium propagation"]
+    assert len(ep) == 2, "the free and the nudged solve must each be recorded"
+    for r in ep:
+        assert r["counts"].shape[1] == 2
+        assert r["counts"][:, 1].sum() > 0, "the test tissue no longer undergoes T1 transitions in the EP solves"
+        assert np.all(r["counts"][:, 1] <= r["counts"][:, 0])
+    # counting changes nothing the solves compute, and leaves the uncounted path as it was
+    for a, b, c in zip(plain, recorded, again):
+        np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
+        np.testing.assert_array_equal(np.asarray(a), np.asarray(c))
