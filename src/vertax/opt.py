@@ -643,8 +643,14 @@ def inner_opt(
     selected_faces: Array | None = None,
     update_t1_func: UpdateT1Func = update_T1,
     perform_energy_check: bool = False,
+    cap_vertex_step: bool = False,
 ) -> tuple[tuple[Array, Array, Array], Array]:
-    """Inner optimization function."""
+    """Inner optimization function.
+
+    Args:
+        cap_vertex_step: Clip each per-step vertex displacement to
+            MAX_VERTEX_STEP_FACTOR * min_dist_T1, as in `minimize`. Forwarded unchanged.
+    """
     # Use the general minimize function with VERTICES (optimize vertTable)
     (vt_f, ht_f, ft_f, _vp_f, _hp_f, _fp_f), (L_hist_full, step_f_array) = minimize(
         vertTable,
@@ -667,6 +673,7 @@ def inner_opt(
         optimization_target=OptimizationTarget.VERTICES,
         update_t1_func=update_t1_func,
         perform_energy_check=perform_energy_check,
+        cap_vertex_step=cap_vertex_step,
     )
 
     # Convert the JAX array step_f to a Python integer
@@ -704,6 +711,7 @@ def cost_ad(
     image_target: Array | None = None,
     update_t1_func: UpdateT1Func = update_T1,
     return_t1_counts: bool = False,
+    cap_vertex_step: bool = False,
 ) -> Array:
     """Automatic differentiation cost function.
 
@@ -716,7 +724,8 @@ def cost_ad(
             vertTable, heTable, faceTable, width, height, vert_params, he_params, face_params, L_in, solver_inner,
             min_dist_T1, iterations_max=iterations_max, tolerance=tolerance, patience=patience,
             selected_verts=selected_verts, selected_hes=selected_hes, selected_faces=selected_faces,
-            optimization_target=OptimizationTarget.VERTICES, update_t1_func=update_t1_func, count_t1=True)
+            optimization_target=OptimizationTarget.VERTICES, update_t1_func=update_t1_func, count_t1=True,
+            cap_vertex_step=cap_vertex_step)
         return L_out(vertTable, heTable, faceTable, width, height, vertTable_target, heTable_target,
                      faceTable_target, selected_verts, selected_hes, selected_faces, image_target), (counts, steps)
     (vertTable, heTable, faceTable), _loss = inner_opt(
@@ -738,6 +747,7 @@ def cost_ad(
         selected_hes,
         selected_faces,
         update_t1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     loss_out_value = L_out(
@@ -784,6 +794,7 @@ def outer_opt(
     image_target: Array | None,
     update_t1_func: UpdateT1Func = update_T1,
     params_regularizer: Callable | None = None,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array]:
     """Outer optimization for Automatic differentiation method."""
     recording = _T1_RECORDER is not None
@@ -812,6 +823,7 @@ def outer_opt(
         selected_faces,
         image_target,
         update_t1_func,
+        cap_vertex_step=cap_vertex_step,
     )
     if recording:
         (grad_verts, grad_hes, grad_faces), (counts, steps) = hypergradient
@@ -886,7 +898,7 @@ def _loss_ep_static(
     return loss_inner + (beta * loss_outer)
 
 
-@partial(jit, static_argnums=(6, 10, 11, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26))
+@partial(jit, static_argnums=(6, 10, 11, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27))
 def _minimize_ep(
     vertTable: Array,
     heTable: Array,
@@ -915,6 +927,7 @@ def _minimize_ep(
     update_t1_func: UpdateT1Func = update_T1,  # 22, 23, 24 : [STATIC]
     perform_energy_check: bool = False,  # 25 static
     count_t1: bool = False,  # 26 static
+    cap_vertex_step: bool = False,  # 27 static
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], tuple[Array, ...]]:
     # 1. Helper: Bind the fixed arguments to the loss function.
     def loss_evaluated(vt: Array, ht: Array, ft: Array, vp: Array, hp: Array, fp: Array) -> Array:
@@ -976,6 +989,7 @@ def _minimize_ep(
         update_t1_func=update_t1_func,
         perform_energy_check=perform_energy_check,
         count_t1=count_t1,
+        cap_vertex_step=cap_vertex_step,
     )
     # With ``count_t1`` the history is ``(hist, steps, counts)``: the counts leave the jitted function as
     # an output, so the caller (outside any trace) can record them.
@@ -1009,6 +1023,7 @@ def inner_eq_prop(
     patience: int = 5,
     update_t1_func: UpdateT1Func = update_T1,
     perform_energy_check: bool = False,
+    cap_vertex_step: bool = False,
 ) -> tuple[tuple[Array, Array, Array], Array]:
     """Wrapper to call the JIT-compiled minimize function and handle post-processing (slicing history)."""
     # Call the JIT-compiled minimize function (defined in previous step)
@@ -1043,6 +1058,7 @@ def inner_eq_prop(
         update_t1_func,
         perform_energy_check=perform_energy_check,
         count_t1=count_t1,
+        cap_vertex_step=cap_vertex_step,
     )
     if count_t1:
         _record_t1(counts[0], step_f_array, "equilibrium propagation")
@@ -1084,6 +1100,7 @@ def _compute_ep_grads(
     update_t1_func: UpdateT1Func = update_T1,
     params_regularizer: Callable | None = None,
     ep_variant: EPVariant = EPVariant.CENTERED,
+    cap_vertex_step: bool = False,
 ) -> tuple[dict[str, Array], dict[str, Array]]:
     """Compute EP parameter gradients and return (params_dict, grads_dict).
 
@@ -1143,6 +1160,7 @@ def _compute_ep_grads(
         tolerance,
         patience,
         update_t1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     # Nudged solve: beta>0
@@ -1172,6 +1190,7 @@ def _compute_ep_grads(
         tolerance,
         patience,
         update_t1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     grad_ep = grad(_loss_ep_static, argnums=(5, 6, 7))
@@ -1265,6 +1284,7 @@ def outer_eq_prop(
     update_t1_func: UpdateT1Func = update_T1,
     params_regularizer: Callable | None = None,
     ep_variant: EPVariant = EPVariant.CENTERED,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array]:
     """Outer optimization for equilibrium propagation method.
 
@@ -1285,7 +1305,7 @@ def outer_eq_prop(
         min_dist_T1, iterations_max, tolerance, patience,
         selected_verts, selected_hes, selected_faces,
         image_target, beta,
-        update_t1_func, params_regularizer, ep_variant,
+        update_t1_func, params_regularizer, ep_variant, cap_vertex_step,
     )
 
     opt_state = solver_outer.init(params)
@@ -1327,6 +1347,7 @@ def outer_eq_prop_with_state(
     update_t1_func: UpdateT1Func = update_T1,
     params_regularizer: Callable | None = None,
     ep_variant: EPVariant = EPVariant.CENTERED,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array, optax.OptState]:
     """Outer optimization for equilibrium propagation with persistent optimizer state.
 
@@ -1349,7 +1370,7 @@ def outer_eq_prop_with_state(
         min_dist_T1, iterations_max, tolerance, patience,
         selected_verts, selected_hes, selected_faces,
         image_target, beta,
-        update_t1_func, params_regularizer, ep_variant,
+        update_t1_func, params_regularizer, ep_variant, cap_vertex_step,
     )
 
     if opt_state is None:
@@ -1394,6 +1415,7 @@ def outer_implicit(
     image_target: Array | None,
     update_t1_func: UpdateT1Func = update_T1,
     params_regularizer: Callable | None = None,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array]:
     """Outer optimization for implicit differentiation method."""
 
@@ -1427,6 +1449,7 @@ def outer_implicit(
         selected_hes,
         selected_faces,
         update_t1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     vert_flat_eq = vertTable_eq.flatten()
@@ -1593,6 +1616,7 @@ def outer_adjoint_state(
     image_target: Array | None,
     update_t1_func: UpdateT1Func = update_T1,
     params_regularizer: Callable | None = None,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array]:
     """Outer optimization for adjoint state method."""
 
@@ -1626,6 +1650,7 @@ def outer_adjoint_state(
         selected_hes,
         selected_faces,
         update_t1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     vertTable_eq_flat = vertTable_eq.flatten()

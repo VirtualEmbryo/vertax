@@ -152,6 +152,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                 selected_faces=only_on_faces,
                 update_T1_func=self._update_T1_func,
                 perform_energy_check=perform_energy_check,
+                cap_vertex_step=self._resolve_cap_vertex_step(),
             )
         return list(loss_history)
 
@@ -210,6 +211,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         selected_faces,
                         self.image_target,
                         self._update_T1_func,
+                        cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
 
                 case BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION:
@@ -246,6 +248,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         self.image_target,
                         self.beta,
                         self._update_T1_func,
+                        cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
 
                 case BilevelOptimizationMethod.IMPLICIT_DIFFERENTIATION:
@@ -281,6 +284,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         selected_faces,
                         self.image_target,
                         self._update_T1_func,
+                        cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
                 case BilevelOptimizationMethod.ADJOINT_STATE:
                     (
@@ -315,6 +319,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         selected_faces,
                         self.image_target,
                         self._update_T1_func,
+                        cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
                 case _:
                     msg = f"Method not recognized. Must be a BilevelOptimizationMethod. \
