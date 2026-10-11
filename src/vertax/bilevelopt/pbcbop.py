@@ -139,6 +139,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                 selected_faces=only_on_faces,
                 update_t1_func=self._update_T1_func,
                 perform_energy_check=perform_energy_check,
+                cap_vertex_step=self._resolve_cap_vertex_step(),
             )
         return list(loss_history)
 
@@ -195,6 +196,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                         self.image_target,
                         self._update_T1_func,
                         self.params_regularizer,
+                        cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
 
                 case BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION:
@@ -233,6 +235,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                             self._update_T1_func,
                             self.params_regularizer,
                             self.ep_variant,
+                            cap_vertex_step=self._resolve_cap_vertex_step(),
                         )
                     else:
                         (
@@ -267,6 +270,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                             self._update_T1_func,
                             self.params_regularizer,
                             self.ep_variant,
+                            cap_vertex_step=self._resolve_cap_vertex_step(),
                         )
 
                 case BilevelOptimizationMethod.IMPLICIT_DIFFERENTIATION:
@@ -300,6 +304,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                         self.image_target,
                         self._update_T1_func,
                         self.params_regularizer,
+                        cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
 
                 case BilevelOptimizationMethod.ADJOINT_STATE:
@@ -333,6 +338,7 @@ class PbcBilevelOptimizer(_BilevelOptimizer):
                         self.image_target,
                         self._update_T1_func,
                         self.params_regularizer,
+                        cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
 
                 case _:

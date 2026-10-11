@@ -18,6 +18,28 @@
   `jit`, `vmap` and `grad` (default `False`); `recording_t1_statistics()` collects
   them from the bilevel estimators.
 
+### Vertex step cap and T1 counts
+
+- `cap_vertex_step` on `PbcBilevelOptimizer` and `BoundedBilevelOptimizer`
+  (default `None` = automatic): the per-step vertex displacement is capped at
+  `5 * min_dist_T1` for line-search inner solvers (`gd_linesearch`,
+  `cg_linesearch`, `optax.lbfgs()`, recognised by the line-search state they
+  carry) and left uncapped for fixed-step ones (`optax.sgd`, `optax.adam`, whose
+  results are unchanged). An explicit `True` or `False` always wins. The choice
+  reaches every relaxation the optimizer runs, including the inner solves of the
+  automatic-differentiation, equilibrium-propagation, implicit-differentiation
+  and adjoint-state hypergradients. **Behaviour change for line-search users**:
+  an uncapped line-search step can move a vertex across whole cells and turn a
+  cell inside out, which `get_area` and `get_area_bounded` (absolute values) do
+  not penalise; set `cap_vertex_step = False` to keep the old behaviour. Original
+  work by Michael Corbeau.
+- Fix: `recording_t1_statistics()` now also records the two solves of the
+  equilibrium-propagation hypergradient (they were dropped).
+- Note: the "kept" count of `minimize(..., count_t1=True)` is exact only when the
+  flips of one iteration share no cell; under the forced T1 rule neighbouring
+  flips can make it differ from the flips performed, and presented minus kept is
+  then unreliable.
+
 ### New modules
 
 - **`vertax.trace`**: traces a segmentation label mask, including a raw crop,

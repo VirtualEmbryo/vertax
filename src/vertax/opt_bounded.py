@@ -523,6 +523,7 @@ def cost_ad_bounded(
     selected_faces: Array | None = None,
     image_target: Array | None = None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, tuple[Array, Array, Array]]:
     """Automatic differentiation cost function."""
     # heTable_before = heTable
@@ -545,6 +546,7 @@ def cost_ad_bounded(
         selected_hes,
         selected_faces,
         update_T1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     # perm = _build_t1_repair_perm(
@@ -598,6 +600,7 @@ def outer_opt_bounded(
     selected_faces: Array | None = None,
     image_target: Array | None = None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     """Outer optimization for a bounded mesh."""
     ((_, (vertTable, heTable, faceTable)), (grad_verts, grad_hes, grad_faces)) = value_and_grad(
@@ -626,6 +629,7 @@ def outer_opt_bounded(
         selected_faces,
         image_target,
         update_T1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     params = {"vert_params": vert_params, "he_params": he_params, "face_params": face_params}
@@ -696,7 +700,7 @@ def _loss_ep_static_bounded(
     return loss_inner_value + (beta * loss_outer_value)
 
 
-@partial(jit, static_argnums=(7, 12, 13, 14, 15, 16, 17, 18, 23, 24, 25, 26))
+@partial(jit, static_argnums=(7, 12, 13, 14, 15, 16, 17, 18, 23, 24, 25, 26, 27))
 def _minimize_ep_bounded(
     vertTable: Array,
     angTable: Array,
@@ -725,6 +729,7 @@ def _minimize_ep_bounded(
     argnums: int = 0,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     perform_energy_check: bool = False,
+    cap_vertex_step: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     def loss_evaluated(
         vt: Array,
@@ -779,6 +784,7 @@ def _minimize_ep_bounded(
         argnums,
         update_T1_func,
         perform_energy_check=perform_energy_check,
+        cap_vertex_step=cap_vertex_step,
     )
 
 
@@ -809,6 +815,7 @@ def inner_eq_prop_bounded(
     beta: float,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     perform_energy_check: bool = False,
+    cap_vertex_step: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array], Array]:
     """Inner optimization function for equilibrium propagation only and bounded meshes."""
     (vt_f, at_f, ht_f, ft_f, _vp_f, _hp_f, _fp_f), (L_hist_full, step_f_array) = _minimize_ep_bounded(
@@ -839,6 +846,7 @@ def inner_eq_prop_bounded(
         argnums=0,
         update_T1_func=update_T1_func,
         perform_energy_check=perform_energy_check,
+        cap_vertex_step=cap_vertex_step,
     )
 
     step_f = step_f_array.item()
@@ -872,6 +880,7 @@ def outer_eq_prop_bounded(
     image_target: Array | None,
     beta: float,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     """Outer optimization for equilibrium propagation."""
     # heTable_before = heTable
@@ -902,6 +911,7 @@ def outer_eq_prop_bounded(
         image_target,
         beta=-beta,
         update_T1_func=update_T1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     # perm_free = _build_t1_repair_perm(
@@ -938,6 +948,7 @@ def outer_eq_prop_bounded(
         image_target,
         beta,
         update_T1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     # perm_nudged = _build_t1_repair_perm(
@@ -1038,6 +1049,7 @@ def outer_implicit_bounded(
     selected_faces: Array | None,
     image_target: Array | None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     """Outer optimization for implicit differentiation method."""
 
@@ -1086,6 +1098,7 @@ def outer_implicit_bounded(
         selected_hes,
         selected_faces,
         update_T1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     # perm = _build_t1_repair_perm(
@@ -1267,6 +1280,7 @@ def outer_adjoint_state_bounded(
     selected_faces: Array | None,
     image_target: Array | None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     """Outer optimization for adjoint state method."""
 
@@ -1315,6 +1329,7 @@ def outer_adjoint_state_bounded(
         selected_hes,
         selected_faces,
         update_T1_func,
+        cap_vertex_step=cap_vertex_step,
     )
 
     # jax.debug.print("vertTableAfter={x}", x=vertTable_eq, ordered=True)

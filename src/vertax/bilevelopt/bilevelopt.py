@@ -169,6 +169,27 @@ class _BilevelOptimizer:
 
         self.min_dist_T1: float = 0.005
         """Threshold to perform T1 transitions."""
+        self.cap_vertex_step: bool | None = None
+        """Cap each per-step vertex displacement at ``MAX_VERTEX_STEP_FACTOR * min_dist_T1``.
+
+        ``None`` (the default) means AUTO: on for line-search solvers, off for fixed-step ones. Set
+        ``True`` or ``False`` to force it either way; an explicit value always wins. The choice is
+        passed to every relaxation the optimizer runs, including the inner solves of every
+        hypergradient estimator.
+
+        Line-search solvers (``gd_linesearch``, ``cg_linesearch``, ``optax.lbfgs()``) pick their own
+        step and can take one of order 1: a vertex then crosses whole cells in a single iteration,
+        which defeats the incremental T1 detector and can turn a cell inside out (its boundary winding
+        flips). Nothing in the energy objects to that, because ``get_area`` and ``get_area_bounded``
+        take the absolute value of the shoelace sum: an inverted cell scores like a sound one of equal
+        area, so the fold is never pushed back out. On the 20-cell tissue of the mitotic-spindle
+        notebook, the first ``gd_linesearch`` step moves a vertex by 124 ``min_dist_T1`` on cells about
+        0.75 wide and leaves a cell with signed area -0.056; with the cap the same step is
+        ``5 min_dist_T1`` and no cell is inverted (measured by Michael Corbeau).
+
+        Fixed-step solvers (``optax.sgd``, ``optax.adam``) are left alone because the cap is not
+        inert for them: ``sgd(0.01)`` with ``min_dist_T1 = 0.005`` gives a cap of 0.025, which
+        bites. Their results are therefore bit-identical to those of a library without the option."""
         self._update_T1: bool = False
         self._update_T1_func: Callable | None = None  # value set by _set_update_T1_func
 
@@ -203,6 +224,18 @@ class _BilevelOptimizer:
     def _set_update_T1_func(self, b: bool) -> None:  # noqa: N802
         """Set the _update_T1_func callable with respect to whether it is needed or not."""
         raise NotImplementedError
+
+    def _resolve_cap_vertex_step(self) -> bool:
+        """Turn ``cap_vertex_step`` into a decision.
+
+        ``None`` means auto: cap line-search solvers, leave fixed-step ones alone. A line-search
+        solver is recognised by the ``ScaleByZoomLinesearchState`` in its own state (see
+        ``_has_zoom_linesearch_state``), whatever it is called. An explicit ``True`` or ``False``
+        always wins.
+        """
+        if self.cap_vertex_step is not None:
+            return bool(self.cap_vertex_step)
+        return _has_zoom_linesearch_state(self._inner_solver)
 
     @property
     def update_T1(self) -> bool:  # noqa: N802
@@ -680,6 +713,8 @@ to use the {BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION} optimization me
         summary += f"Tolerance: {self.tolerance}\n"
         summary += f"Patience: {self.patience}\n"
         summary += f"Minimum distance for T1: {self.min_dist_T1}\n"
+        _cap = "auto" if self.cap_vertex_step is None else str(self.cap_vertex_step)
+        summary += f"Cap vertex step: {_cap} (-> {self._resolve_cap_vertex_step()})\n"
         summary += f"Update T1: {self.update_T1}\n"
         if self._update_T1_func is not None:
             summary += f"Update T1 function: {self._update_T1_func.__name__}\n"  # ty:ignore[unresolved-attribute]
