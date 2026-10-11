@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — changes since the merge base `ed504f2`
+## 0.2.0 — changes since the merge base `ed504f2`
 
 ### Solver and T1 options (defaults unchanged)
 
