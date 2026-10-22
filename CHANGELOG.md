@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.1 — 2026-10-22
+
+Bug-fix release.
+
+### Fixed
+
+- `PbcMesh` (`from_seeds`, `from_random_seeds`, `from_mask`, `from_image`) and `BoundedMesh`
+  (`from_seeds`, `from_random_seeds`) built their `vertices` (and, for `BoundedMesh`, their `angles`)
+  as `float32` whatever `jax_enable_x64` was set to, so a user who enabled x64 still relaxed a
+  `float32` mesh. Both now use JAX's default float dtype: `float32` by default, `float64` under
+  `jax_enable_x64`. Integer index tables are unchanged.
+- Docstrings and notes that told users to cast `PbcMesh.vertices` to `float64` after construction
+  (`rheology`, `clamped`, `require_float64`'s error message) are updated.
+- New regression tests: `tests/test_default_float_dtype.py`, with reference arrays from 0.2.0.
+
+**Results without `jax_enable_x64` are unchanged; users who enabled x64 without casting the mesh now get
+float64, as intended.** The mesh constructors and one relaxation of each mode are bit-identical to 0.2.0
+without x64 (checked by the new tests).
+
 ## 0.2.0 — changes since the merge base `ed504f2`
 
 ### Solver and T1 options (defaults unchanged)
