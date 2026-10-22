@@ -286,7 +286,8 @@ def _rheo_mesh():  # noqa: ANN202
 
     That convention is load-bearing rather than arbitrary: at 20 cells in a 1:2 box, 4 of 12 random
     keys hit the `PbcMesh` face-ordering defect, while the square box at 20 cells hit 0 of 12.
-    The cast to float64 is also not cosmetic -- `PbcMesh.from_seeds` builds `vertices` in float32.
+    The cast to float64 is a no-op under x64 since 0.2.1 (meshes follow the default float dtype); before
+    that `PbcMesh.from_seeds` built `vertices` in float32 whatever the setting.
     """
     mesh = PbcMesh.from_random_seeds(nb_seeds=20, width=20.0**0.5, height=20.0**0.5, random_key=0)
     mesh.vertices = jnp.asarray(mesh.vertices, jnp.float64)

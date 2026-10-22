@@ -42,6 +42,9 @@ class BoundedMesh(Mesh):
 
     `angles` is a 1D array of floats of size (nb_angles), with the angles sustaining the arcs of the free interfaces ;
     between 0 and PI / 2.
+
+    The floats of `vertices` and `angles` use JAX's default float dtype: `float32`, or `float64` when
+    `jax_enable_x64` is enabled before the mesh is built.
     """
 
     def __init__(self) -> None:
@@ -82,7 +85,7 @@ class BoundedMesh(Mesh):
         bounded mesh via our method.
 
         Args:
-            seeds (Array[float32]): jax float array of seed positions of shape (nbSeeds, 2).
+            seeds (Array): jax float array of seed positions of shape (nbSeeds, 2).
             width (float): width of the box containing the seeds.
             height (float): height of the box containing the seeds.
             random_key (int): seed for a random number generator to add new seeds if needed, decide on cell fates...
@@ -298,8 +301,8 @@ class BoundedMesh(Mesh):
                         heTable[tidx][4] = 1
 
                     bounded_mesh = cls._create()
-                    bounded_mesh.vertices = jnp.array(vertTable, dtype=np.float32)
-                    bounded_mesh.angles = jnp.array(angTable, dtype=np.float32)
+                    bounded_mesh.vertices = jnp.array(vertTable, dtype=jnp.result_type(float))
+                    bounded_mesh.angles = jnp.array(angTable, dtype=jnp.result_type(float))
                     bounded_mesh.faces = jnp.array(faceTable, dtype=np.int32)
                     bounded_mesh.edges = jnp.array(heTable, dtype=np.int32)
                     bounded_mesh.width = width

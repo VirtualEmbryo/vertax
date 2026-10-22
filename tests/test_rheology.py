@@ -58,7 +58,7 @@ def _enable_x64_for_this_module():  # noqa: PT004
 
 @pytest.fixture(scope="module")
 def mesh():
-    """A periodic mesh in float64. `PbcMesh.from_seeds` builds float32; the cast is not cosmetic."""
+    """A periodic mesh in float64 (meshes follow the default float dtype; the cast is a no-op under x64)."""
     m = PbcMesh.from_random_seeds(nb_seeds=N_CELLS, width=SIDE, height=SIDE, random_key=SEED)
     m.vertices = jnp.asarray(m.vertices, dtype=jnp.float64)
     m.vertices_params = jnp.zeros(m.nb_vertices, dtype=jnp.float64)
@@ -94,9 +94,13 @@ def test_v0a_mean_removal(mode) -> None:  # noqa: ANN001
 
 
 def test_v0a_mean_removal_is_enforced(mesh) -> None:  # noqa: ANN001
-    """`make_shear_mode` must refuse a mode whose weights do not sum to zero."""
+    """`make_shear_mode` must refuse a mode whose weights do not sum to zero.
+
+    A negative tolerance makes the check fail whatever the rounding residue of the mean removal is
+    (it can be exactly zero in float64), so the test exercises the refusal itself.
+    """
     with pytest.raises(ValueError, match="net force"):
-        make_shear_mode(mesh.vertices, SIDE, SIDE, n=1, mean_tol=0.0)
+        make_shear_mode(mesh.vertices, SIDE, SIDE, n=1, mean_tol=-1.0)
 
 
 def test_v0b_wrap_identity_and_half_open_interval() -> None:

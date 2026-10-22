@@ -22,6 +22,8 @@ class PbcMesh(Mesh):
 
     For a PbcMesh, `vertices` is a 2D array of floats of size (nb_vertices, 2) ;
     with the coordinates of the vertices (in ]0, width[ x ]0, height[ ).
+    The floats use JAX's default float dtype: `float32`, or `float64` when `jax_enable_x64` is enabled
+    before the mesh is built.
 
     `edges` is a  2D array of integers of size (nb_half_edges, 8), with:
 
@@ -80,7 +82,7 @@ class PbcMesh(Mesh):
         The seeds are assumed to have positive x and y positions.
 
         Args:
-            seeds (Array[float32]): jax float array of seed positions of shape (nbSeeds, 2).
+            seeds (Array): jax float array of seed positions of shape (nbSeeds, 2).
             width (float): width of the box containing the seeds.
             height (float): height of the box containing the seeds.
         """
@@ -103,7 +105,7 @@ class PbcMesh(Mesh):
         )
 
         pbc_mesh = cls._create()
-        pbc_mesh.vertices = jnp.array(vertices, dtype=np.float32)
+        pbc_mesh.vertices = jnp.array(vertices, dtype=jnp.result_type(float))
         pbc_mesh.edges = jnp.array(edges, dtype=np.int32)
         pbc_mesh.faces = jnp.array(faces, dtype=np.int32)
         pbc_mesh.width = width
@@ -320,7 +322,7 @@ class PbcMesh(Mesh):
         )
 
         pbc_mesh = cls._create()
-        pbc_mesh.vertices = jnp.array(vertices, dtype=np.float32)
+        pbc_mesh.vertices = jnp.array(vertices, dtype=jnp.result_type(float))
         pbc_mesh.edges = jnp.array(edges, dtype=np.int32)
         pbc_mesh.faces = jnp.array(faces, dtype=np.int32)
         pbc_mesh.width = 2 * width
