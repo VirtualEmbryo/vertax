@@ -775,7 +775,7 @@ def _make_he_structure(  # noqa: C901
         # This converts an unbounded silent hang into an actionable error. It deliberately does NOT
         # change the modulus: where a chord exists, walking `edges_face` can emit a truncated or
         # self-intersecting `ordered_face`, and `geo.get_area` takes `0.5*|shoelace|`, which accepts
-        # both silently -- the `get_area_bounded` failure mode. Fixing that needs a geometric
+        # both silently -- the failure mode `get_area_bounded` had before 0.2.1. Fixing that needs a geometric
         # decision, with an acceptance test on `clamped.signed_face_areas`, not `|shoelace|`.
         max_steps = 8 * len(face) ** 2 + 64
         steps = 0
