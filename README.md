@@ -128,6 +128,21 @@ generated from it and kept in sync by the `uv` pre-commit hooks.
 
 For GPU support, install JAX with CUDA as described in the [JAX docs](https://github.com/google/jax#installation) before installing VertAX.
 
+### Numerical precision
+
+VertAX follows JAX's default float dtype: `float32` unless you enable 64-bit mode, in which case
+meshes and relaxations are `float64`. Enable it before the first JAX array is created:
+
+```python
+import jax
+jax.config.update("jax_enable_x64", True)   # or set the environment variable JAX_ENABLE_X64=1
+```
+
+or scope it with `jax.experimental.enable_x64()` as a context manager. Meshes built afterwards
+(`PbcMesh`, `BoundedMesh`) are `float64`, and no cast is needed. Mesh integer tables stay `int32`
+in both modes. Use `float64` for Hessian, conditioning and equilibrium-residual work; the
+rheometry and clamped-patch modules below require it.
+
 ---
 
 ## Simulation modes

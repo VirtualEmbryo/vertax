@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
@@ -19,6 +20,57 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 __all__ = ["BoundedMesh"]
+
+
+_ORIENTATION_RTOL = 1e-6
+"""Relative tolerance of the orientation checks, against the sum of the absolute chord polygon areas."""
+
+
+def _signed_chord_polygons(mesh: BoundedMesh) -> NDArray:
+    """Signed area of the chord polygon (the polygon of its vertices, arcs ignored) of every face."""
+    he = np.asarray(mesh.edges)
+    vertices = np.vstack([np.zeros((2, 2)), np.asarray(mesh.vertices, dtype=np.float64)])  # two reserved rows
+    source, target = he[:, 3] + he[:, 5], he[:, 4] + he[:, 6] - 1
+    in_a_cell = source != 0  # the outer half-edge of a free interface belongs to no cell
+    cross = vertices[source, 0] * vertices[target, 1] - vertices[target, 0] * vertices[source, 1]
+    return np.bincount(he[in_a_cell, 7], weights=cross[in_a_cell], minlength=len(mesh.faces)) / 2
+
+
+def _check_face_orientation(mesh: BoundedMesh, origin: str) -> None:
+    """Refuse a mesh whose faces are clockwise; warn about faces whose chord polygon has turned over.
+
+    Cell areas read every face as counterclockwise (see `BoundedMesh`), so a clockwise mesh would be
+    read inside out, with negative areas and no error. The sign of a single face's chord polygon cannot
+    tell the two cases apart: it is also negative for a crescent, a legitimate cell whose interior
+    vertices have crossed the chord of its free arc. The sum of the signed chord polygons of all faces
+    can: every interior edge is run once in each sense, so the sum is the signed area of the polygon
+    through the outer chords. It depends on the surface vertices only, so a crescent leaves it
+    positive, and it changes sign when every face is reversed. A mesh whose sum is zero (a doublet
+    whose outer chords coincide) is not decided by this test and is accepted.
+
+    Raises:
+        ValueError: if the faces are clockwise.
+    """
+    polygons = _signed_chord_polygons(mesh)
+    scale = float(np.sum(np.abs(polygons)))
+    if float(np.sum(polygons)) < -_ORIENTATION_RTOL * scale:
+        msg = (
+            f"{origin}: the faces of this bounded mesh are clockwise (the chord polygons of its faces sum to "
+            f"{float(np.sum(polygons)):.6g}, the outer polygon being negative). VertAX reads every face of a bounded "
+            "mesh counterclockwise, so cell areas would come out inside out. List each face counterclockwise, with "
+            "the arc of a free interface to the right of its directed chord."
+        )
+        raise ValueError(msg)
+    turned_over = np.flatnonzero(polygons < -_ORIENTATION_RTOL * scale / max(len(polygons), 1))
+    if turned_over.size:
+        shown = ", ".join(str(i) for i in turned_over[:10]) + (", ..." if turned_over.size > 10 else "")
+        warnings.warn(
+            f"{origin}: {turned_over.size} face(s) have a turned-over chord polygon (face {shown}). This is "
+            "legitimate for a crescent (interior vertices across the chord of a free arc), but the cell is "
+            "folded if its outline crosses itself; check `mesh.get_area` (a folded cell has a non-positive area).",
+            UserWarning,
+            stacklevel=3,
+        )
 
 
 class BoundedMesh(Mesh):
@@ -42,6 +94,16 @@ class BoundedMesh(Mesh):
 
     `angles` is a 1D array of floats of size (nb_angles), with the angles sustaining the arcs of the free interfaces ;
     between 0 and PI / 2.
+
+    Every face is traversed counterclockwise (`from_seeds` orders it so, and T1 transitions keep it),
+    and the arc of a free interface bulges to the right of the directed chord of its half-edge, away
+    from the cell. Cell areas (`vertax.geo`) rely on this orientation and do not read it from the
+    sign of a cell's chord polygon, which turns over when the cell's interior vertices cross the
+    chord of its arc while the cell keeps its side. A mesh built outside VertAX must therefore list
+    its faces counterclockwise; `load_mesh` and `load_mesh_txt` refuse a clockwise mesh.
+
+    The floats of `vertices` and `angles` use JAX's default float dtype: `float32`, or `float64` when
+    `jax_enable_x64` is enabled before the mesh is built.
     """
 
     def __init__(self) -> None:
@@ -82,7 +144,7 @@ class BoundedMesh(Mesh):
         bounded mesh via our method.
 
         Args:
-            seeds (Array[float32]): jax float array of seed positions of shape (nbSeeds, 2).
+            seeds (Array): jax float array of seed positions of shape (nbSeeds, 2).
             width (float): width of the box containing the seeds.
             height (float): height of the box containing the seeds.
             random_key (int): seed for a random number generator to add new seeds if needed, decide on cell fates...
@@ -298,13 +360,14 @@ class BoundedMesh(Mesh):
                         heTable[tidx][4] = 1
 
                     bounded_mesh = cls._create()
-                    bounded_mesh.vertices = jnp.array(vertTable, dtype=np.float32)
-                    bounded_mesh.angles = jnp.array(angTable, dtype=np.float32)
+                    bounded_mesh.vertices = jnp.array(vertTable, dtype=jnp.result_type(float))
+                    bounded_mesh.angles = jnp.array(angTable, dtype=jnp.result_type(float))
                     bounded_mesh.faces = jnp.array(faceTable, dtype=np.int32)
                     bounded_mesh.edges = jnp.array(heTable, dtype=np.int32)
                     bounded_mesh.width = width
                     bounded_mesh.height = height
 
+                    _check_face_orientation(bounded_mesh, "BoundedMesh.from_seeds")
                     return bounded_mesh
 
             # If success was 1, we had not enough bounded faces, we add a new seed to see if it helps.
@@ -370,6 +433,12 @@ class BoundedMesh(Mesh):
 
         Returns:
             Mesh: the mesh loaded from the .npz file.
+
+        Raises:
+            ValueError: if the faces of the mesh are clockwise (see `BoundedMesh`).
+
+        Warns:
+            UserWarning: if some faces have a turned-over chord polygon (a crescent, or a fold).
         """
         mesh_file = np.load(path)
         mesh = cls._create()
@@ -384,6 +453,7 @@ class BoundedMesh(Mesh):
         mesh.vertices_params = mesh_file["vertices_params"]
         mesh.edges_params = mesh_file["edges_params"]
         mesh.faces_params = mesh_file["faces_params"]
+        _check_face_orientation(mesh, f"BoundedMesh.load_mesh({path!r})")
         return mesh
 
     def save_mesh_txt(
@@ -463,6 +533,12 @@ class BoundedMesh(Mesh):
 
         Returns:
             Self: The loaded mesh.
+
+        Raises:
+            ValueError: if the faces of the mesh are clockwise (see `BoundedMesh`).
+
+        Warns:
+            UserWarning: if some faces have a turned-over chord polygon (a crescent, or a fold).
         """
         dirpath = Path(directory)
         dirpath.mkdir(parents=True, exist_ok=True)
@@ -488,6 +564,7 @@ class BoundedMesh(Mesh):
             numbers = f.readline().split()
             mesh.width = float(numbers[0])
             mesh.height = float(numbers[1])
+        _check_face_orientation(mesh, f"BoundedMesh.load_mesh_txt({str(directory)!r})")
         return mesh
 
     def get_length(self, half_edge_id: Array) -> Array:

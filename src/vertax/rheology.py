@@ -41,8 +41,9 @@ dropping it silently would corrupt the estimator, which is why this cost is kept
 
 Conventions and gotchas
 -----------------------
-* **Everything here assumes ``float64``.** Call :func:`require_float64` in any driver. Note
-  ``PbcMesh.from_seeds`` builds ``vertices`` in **float32**; cast after construction.
+* **Everything here assumes ``float64``.** Call :func:`require_float64` in any driver. Enable x64
+  before the first JAX array is created and ``PbcMesh.vertices`` is then built in ``float64`` too
+  (meshes follow JAX's default float dtype); no cast after construction is needed.
 * **Unsliced tables only.** ``opt._jit_minimize`` calls the inner loss as
   ``L_in(vt[selected_verts], ..., fp[selected_faces])`` while taking its *gradient* on the unsliced
   tables. The drive term indexes vertices positionally, so a partial ``selected_verts`` would
@@ -113,7 +114,7 @@ def require_float64() -> None:
     if jnp.zeros(1).dtype != jnp.float64:
         msg = (
             "rheology requires float64. Put `jax.config.update('jax_enable_x64', True)` before the "
-            "first jax array is created, and cast PbcMesh.vertices (built float32) after construction."
+            "first jax array is created; meshes built afterwards are float64 too."
         )
         raise RuntimeError(msg)
 

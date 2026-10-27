@@ -180,9 +180,10 @@ class _BilevelOptimizer:
         Line-search solvers (``gd_linesearch``, ``cg_linesearch``, ``optax.lbfgs()``) pick their own
         step and can take one of order 1: a vertex then crosses whole cells in a single iteration,
         which defeats the incremental T1 detector and can turn a cell inside out (its boundary winding
-        flips). Nothing in the energy objects to that, because ``get_area`` and ``get_area_bounded``
-        take the absolute value of the shoelace sum: an inverted cell scores like a sound one of equal
-        area, so the fold is never pushed back out. On the 20-cell tissue of the mitotic-spindle
+        flips). Nothing in the periodic energy objects to that, because ``get_area`` takes the absolute
+        value of the shoelace sum: an inverted cell scores like a sound one of equal area, so the fold
+        is never pushed back out (``get_area_bounded`` did the same before 0.2.1; it now returns the
+        signed area, which is not positive for a folded bounded cell). On the 20-cell tissue of the mitotic-spindle
         notebook, the first ``gd_linesearch`` step moves a vertex by 124 ``min_dist_T1`` on cells about
         0.75 wide and leaves a cell with signed area -0.056; with the cap the same step is
         ``5 min_dist_T1`` and no cell is inverted (measured by Michael Corbeau).

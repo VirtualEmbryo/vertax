@@ -358,16 +358,15 @@ def get_area_bounded(face: Array, vertTable: Array, angTable: Array, heTable: Ar
     final_carry, _ = jax.lax.scan(scan_body, initial_carry, xs)  # type: ignore
     _, final_res, _ = final_carry
 
-    # final_res is [shoelace_sum, arc_correction_sum]. Take the modulus of EACH separately, not of
-    # their sum: the cell area is (chord polygon) + (arc caps), and the two terms carry unrelated
-    # signs. The sign of the shoelace sum encodes only the face's traversal orientation -- about 45%
-    # of faces in the stored bounded meshes are clockwise -- while the arc sum is non-negative by
-    # construction (chordlen**2 >= 0 and (angle - sin*cos)/(2 sin**2) > 0 over the range angles are
-    # clipped to in update_T1_bounded, so an inward-bulging arc is not representable). Using
-    # 0.5*abs(shoelace + arc) instead subtracts the caps on every clockwise face, returning
-    # abs(caps - polygon), which is not an area and can vanish; on real meshes the two differ by up
-    # to 117x. Pinned by tests/test_area_bounded_groundtruth.py, which fails for the abs(sum) form.
-    return 0.5 * jnp.sum(jnp.abs(final_res))
+    # final_res is [shoelace_sum, arc_correction_sum]; the area is half their sum, both signed.
+    # Faces are traversed counterclockwise (`BoundedMesh` builds them so and T1 transitions keep it),
+    # and every arc bulges to the right of its directed chord, away from the cell, so its cap always
+    # adds (the arc sum is positive: angles are clipped to [0.017, pi/2 - 0.001]). The shoelace sum is the
+    # signed chord polygon. It is negative when the cell's interior vertices have crossed the chord
+    # of its arc (a crescent: the area is cap - |polygon|, still positive), and the area itself is
+    # negative only when the cell has folded. Taking abs of the shoelace sum would read a crescent
+    # as polygon and cap on the same side of the chord, cap + |polygon|, and hide a fold.
+    return 0.5 * jnp.sum(final_res)
 
 
 @jit

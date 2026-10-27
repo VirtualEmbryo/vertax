@@ -72,7 +72,9 @@ u, v = split_gradient(E, patch, out["x"])      # grad E = K u + v, exactly
 
 `float64` is required: the residuals reported here reach `1e-13`, which `float32` cannot represent.
 Enable it before importing JAX arrays, e.g. `jax.config.update("jax_enable_x64", True)` at process
-scope or `jax.experimental.enable_x64()` as a context manager.
+scope or `jax.experimental.enable_x64()` as a context manager. The arrays of a loaded patch are
+`float64` on disk and become JAX arrays in JAX's default float dtype, so under x64 they stay `float64`
+with no cast; without x64 they are rounded to `float32`.
 """
 from __future__ import annotations
 

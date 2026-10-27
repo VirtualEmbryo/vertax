@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.2.1 — 2026-10-22
+
+Bug-fix release, with two fixes.
+
+### Fixed: mesh constructors follow JAX's default float dtype
+
+- `PbcMesh` (`from_seeds`, `from_random_seeds`, `from_mask`, `from_image`) and `BoundedMesh`
+  (`from_seeds`, `from_random_seeds`) built their `vertices` (and, for `BoundedMesh`, their `angles`)
+  as `float32` whatever `jax_enable_x64` was set to, so a user who enabled x64 still relaxed a
+  `float32` mesh. Both now use JAX's default float dtype: `float32` by default, `float64` under
+  `jax_enable_x64`. Integer index tables are unchanged.
+- Docstrings and notes that told users to cast `PbcMesh.vertices` to `float64` after construction
+  (`rheology`, `clamped`, `require_float64`'s error message) are updated.
+- New regression tests: `tests/test_default_float_dtype.py`, with reference arrays from 0.2.0.
+
+**Results without `jax_enable_x64` are unchanged; users who enabled x64 without casting the mesh now get
+float64, as intended.** The mesh constructors and one relaxation of each mode are bit-identical to 0.2.0
+without x64 (checked by the new tests).
+
+### Fixed: area of a bounded cell whose chord polygon has turned over
+
+- `get_area_bounded` (and with it `BoundedMesh.get_area`, the bounded energy and the energy check of the
+  bounded T1 update) returned `0.5 (|polygon| + caps)` for a cell, where *polygon* is the signed area of
+  the polygon through the cell's vertices and *caps* the area between each free-interface chord and its
+  arc. `BoundedMesh` builds every face counterclockwise and T1 transitions keep it, so the sign of the
+  polygon is not the cell's orientation: it turns over when a free-interface cell's interior vertices
+  cross the chord of its arc while the arc keeps the cell open (a crescent). Such a cell was given
+  cap + |polygon| instead of cap − |polygon|, and a folded cell was hidden. The area is now the signed
+  polygon plus the caps: a crescent has area cap − |polygon|, and a folded cell has a non-positive area.
+- Because the area now relies on the counterclockwise convention, `BoundedMesh.from_seeds`, `load_mesh`
+  and `load_mesh_txt` check it. A mesh whose faces are clockwise raises `ValueError` (it would be read
+  inside out, with negative areas and no error); a mesh with a face whose chord polygon has turned over,
+  a crescent or a fold, emits a `UserWarning`. A mesh built and saved by VertAX is never refused.
+- New tests: `tests/test_bounded_crescent_cell.py` (closed-form area and energy gradient of a crescent,
+  on the configuration and its mirror image) and `tests/test_bounded_mesh_orientation_guard.py`.
+  `tests/test_area_bounded_groundtruth.py` now asserts the signed area, on a stored mesh with a folded cell.
+
+**Results are unchanged, bit for bit, for any bounded mesh without a turned-over cell** (checked on the two
+stored bounded regression meshes: the other 19 cell areas are identical). The two bounded regression
+references (`tests/reference_result_test_{forward,inverse}_modeling_bounded.npz`) held a folded cell that
+the unsigned area could not resist, and are regenerated: that relaxation no longer folds the cell.
+
 ## 0.2.0 — changes since the merge base `ed504f2`
 
 ### Solver and T1 options (defaults unchanged)

@@ -1,33 +1,27 @@
-"""`get_area_bounded` must add the arc caps, never subtract them.
+"""`get_area_bounded` returns the signed chord polygon plus the arc caps.
 
-Two spellings of the final combination existed in the tree, with ``s`` the accumulated shoelace sum
-and ``a`` the accumulated arc correction::
+With ``s`` the accumulated shoelace sum and ``a`` the accumulated arc correction of a face, the
+area is ``0.5 * (s + a)``:
 
-    old:  0.5 * abs(s + a)          new:  0.5 * (abs(s) + abs(a))
+* faces are traversed counterclockwise -- `BoundedMesh.from_seeds` orders every face so, and T1
+  transitions keep the half-edge structure consistently oriented -- so ``0.5 * s`` is the signed
+  area of the chord polygon;
+* ``0.5 * a`` is the area of the circular caps between each free-interface chord and its arc. It is
+  non-negative by construction: ``a = sum(chordlen**2 * f(angle))`` with
+  ``f(angle) = (angle - sin*cos) / (2 * sin**2) > 0`` on the range angles are clipped to
+  (``topo.py``: 0.017 to pi/2 - 0.001). Every arc bulges to the right of its directed chord, away
+  from the cell, so its cap always adds.
 
-They agree only when ``sign(s) == sign(a)``, and they disagree on real meshes by up to 117x.
+``s < 0`` therefore does not mean a clockwise face: it means that the cell's interior vertices have
+crossed the chord of its arc. Such a cell is a crescent when ``s + a > 0`` (area ``cap - |polygon|``)
+and a fold when ``s + a <= 0``. The spellings ``0.5 * (abs(s) + a)`` and ``0.5 * abs(s + a)`` both
+differ from the area there: the first reads the cap on the polygon's side of the chord, the second
+hides a fold.
 
-Why the new form is the correct one:
-
-* ``0.5 * abs(s)`` is the chord-polygon area. The sign of ``s`` encodes the *traversal orientation*
-  of the face, not anything physical: for the stored bounded meshes roughly 45% of faces are
-  clockwise (verified by comparing ``s`` against an independent signed-area computation over the
-  same vertex ring -- ``s`` is exactly twice it, and is negative exactly when the ring is
-  clockwise). An area must not depend on traversal direction.
-* ``0.5 * a`` is the total area of the circular segments between each boundary chord and its arc.
-  It is non-negative by construction: ``a = sum(chordlen**2 * f(angle))`` with
-  ``f(angle) = (angle - sin*cos) / (2 * sin**2)``, and ``f > 0`` on the whole range angles are
-  clipped to (``topo.py``: ``clip(angTable, 0.017, pi/2 - 0.001)``, applied on every inner
-  iteration). The implementation therefore cannot represent an inward-bulging arc at all.
-
-So the cell area is (chord polygon) + (arc caps), i.e. the new form. The old form subtracts the
-caps whenever the face happens to be traversed clockwise, returning ``abs(segments - polygon)``,
-which is not an area and can even vanish.
-
-This test is deliberately built to *discriminate*: it asserts the area is never below the
-chord-polygon area, and it first asserts that the fixture actually contains a clockwise face, so
-the discriminating case is exercised. Any orientation-blind check -- or any fixture with only
-counter-clockwise faces -- passes both spellings, which is how the defect went unnoticed.
+The fixture is discriminating: face 3 of the stored relaxed mesh
+(``fixtures/bounded_mesh_with_turned_over_cell.npz``) has turned over (it was counterclockwise at
+construction, ``s`` = +0.17, and is ``s`` = -0.72 after the relaxation), so the test first asserts
+that such a face exists.
 """
 from __future__ import annotations
 
@@ -42,7 +36,7 @@ import jax.numpy as jnp
 
 from vertax.geo import _compute_contributions, get_area_bounded
 
-FIXTURE = Path(__file__).parent / "reference_result_test_forward_modeling_bounded.npz"
+FIXTURE = Path(__file__).parent / "fixtures" / "bounded_mesh_with_turned_over_cell.npz"
 
 
 # `jax_enable_x64` is confined to this module rather than set at import scope.
@@ -60,10 +54,16 @@ def _enable_x64_for_this_module():  # noqa: PT004
 
 
 def _load():
+    """The fixture's tables in the layout `get_area_bounded` reads, as the bounded energy builds it.
+
+    The vertex table gets the two reserved leading rows (half-edges store vertex ids offset by 2),
+    and the arc half-angles, stored one per edge, are repeated for the two half-edges of each edge.
+    """
     with np.load(FIXTURE, allow_pickle=True) as z:
+        vertices = np.asarray(z["vertices"], float)
         return (
-            jnp.asarray(np.asarray(z["vertices"], float), jnp.float64),
-            jnp.asarray(np.asarray(z["angles"], float), jnp.float64),
+            jnp.asarray(np.vstack([[[0.0, 0.0], [1.0, 1.0]], vertices]), jnp.float64),
+            jnp.asarray(np.repeat(np.asarray(z["angles"], float), 2), jnp.float64),
             jnp.asarray(np.asarray(z["edges"])),
             jnp.asarray(np.asarray(z["faces"])),
         )
@@ -84,11 +84,7 @@ def _shoelace_and_arc(face: int, vt, at, ht) -> tuple[float, float]:
 
 
 def _faces_with_valid_ring(vt, ht, ft):
-    """Faces whose half-edge ring stays inside the vertex table.
-
-    At least one stored face (face 17 of this fixture) walks off the end of the vertex table; that
-    is a separate data-integrity problem and is excluded here rather than silently masked.
-    """
+    """Faces whose half-edge ring stays inside the (padded) vertex table: a guard on the fixture."""
     ht_np, ft_np, n_v = np.asarray(ht), np.asarray(ft), int(np.asarray(vt).shape[0])
     ok = []
     for f in range(ft_np.shape[0]):
@@ -107,29 +103,28 @@ def _faces_with_valid_ring(vt, ht, ft):
     return ok
 
 
-def test_fixture_contains_a_clockwise_face() -> None:
-    """Guard: if every face were counter-clockwise this test suite could not discriminate."""
+def test_fixture_contains_a_turned_over_face() -> None:
+    """Guard: if no chord polygon had turned over, the area test below could not discriminate."""
     vt, at, ht, ft = _load()
-    cw = [f for f, start in _faces_with_valid_ring(vt, ht, ft)
-          if _shoelace_and_arc(start, vt, at, ht)[0] < 0]
-    assert cw, "fixture has no clockwise face; the area test below would not discriminate"
+    turned = [f for f, start in _faces_with_valid_ring(vt, ht, ft)
+              if _shoelace_and_arc(start, vt, at, ht)[0] < 0]
+    assert turned, "fixture has no turned-over chord polygon; the area test below would not discriminate"
 
 
-def test_arc_caps_are_added_not_subtracted() -> None:
-    """Area must be chord-polygon + arc caps for EVERY face, including clockwise ones."""
+def test_area_is_signed_polygon_plus_caps() -> None:
+    """Area must be signed chord polygon + arc caps for EVERY face, including turned-over ones."""
     vt, at, ht, ft = _load()
     checked = discriminating = 0
     for f, start in _faces_with_valid_ring(vt, ht, ft):
         s, a = _shoelace_and_arc(start, vt, at, ht)
-        polygon, caps = 0.5 * abs(s), 0.5 * abs(a)
         got = float(get_area_bounded(jnp.asarray(f), vt, at, ht, ft))
-        assert got == pytest.approx(polygon + caps, rel=1e-9, abs=1e-12), (
-            f"face {f}: area {got} != polygon {polygon} + caps {caps}; "
-            f"0.5*abs(s+a) would give {0.5 * abs(s + a)} (s={s}, a={a})"
+        assert got == pytest.approx(0.5 * (s + a), rel=1e-9, abs=1e-12), (
+            f"face {f}: area {got} != 0.5 (s + a) = {0.5 * (s + a)}; "
+            f"0.5 (|s| + a) would give {0.5 * (abs(s) + a)} (s={s}, a={a})"
         )
-        assert got >= polygon - 1e-12, f"face {f}: arc caps reduced the area ({got} < {polygon})"
+        assert got >= 0.5 * s - 1e-12, f"face {f}: arc caps reduced the area ({got} < {0.5 * s})"
         checked += 1
         if s < 0 < a:
             discriminating += 1
-    assert checked > 0, "no face with a valid ring was checked"
-    assert discriminating > 0, "no clockwise face with a non-zero arc term was exercised"
+    assert checked == ft.shape[0], f"only {checked} of {ft.shape[0]} faces have a valid ring"
+    assert discriminating > 0, "no turned-over face with a non-zero arc term was exercised"
