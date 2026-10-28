@@ -1,7 +1,7 @@
-r"""Bilevel optimizer for bulk-driven shear rheometry: design :math:`\bm\theta` against a compliance.
+r"""Bilevel optimizer for bulk-driven shear rheometry: design $\bm\theta$ against a compliance.
 
 Implements the centered Equilibrium-Propagation estimator over the **two driven conditions**
-:math:`\pm a_0`, with an alternating (block-coordinate) nudged phase.
+$\pm a_0$, with an alternating (block-coordinate) nudged phase.
 
 Why this lives at the optimizer layer
 -------------------------------------
@@ -13,33 +13,34 @@ homeless.
 
 The estimator
 -------------
-With :math:`\mathbf Z=(\mathbf X_+,\mathbf X_-)`,
-:math:`\mathcal E_{\rm tot}=\mathcal E_{+a_0}(\mathbf X_+)+\mathcal E_{-a_0}(\mathbf X_-)`,
-:math:`\widehat J=(U(\mathbf X_+)-U(\mathbf X_-))/(2a_0)` and
-:math:`\widehat{\mathcal C}=(\widehat J/J_{\rm tgt}-1)^2`:
+With $\mathbf Z=(\mathbf X_+,\mathbf X_-)$,
+$\mathcal E_{\rm tot}=\mathcal E_{+a_0}(\mathbf X_+)+\mathcal E_{-a_0}(\mathbf X_-)$,
+$\widehat J=(U(\mathbf X_+)-U(\mathbf X_-))/(2a_0)$ and
+$\widehat{\mathcal C}=(\widehat J/J_{\rm tgt}-1)^2$:
 
-.. math::
-    \widehat{\nabla_{\bm\theta}\mathcal C}=\frac{1}{2\beta}\Big[
-      \big(\partial_{\bm\theta}\mathcal E(\mathbf X_+^{+\beta})
-          +\partial_{\bm\theta}\mathcal E(\mathbf X_-^{+\beta})\big)
-     -\big(\partial_{\bm\theta}\mathcal E(\mathbf X_+^{-\beta})
-          +\partial_{\bm\theta}\mathcal E(\mathbf X_-^{-\beta})\big)\Big]
+$$
+\widehat{\nabla_{\bm\theta}\mathcal C}=\frac{1}{2\beta}\Big[
+  \big(\partial_{\bm\theta}\mathcal E(\mathbf X_+^{+\beta})
+      +\partial_{\bm\theta}\mathcal E(\mathbf X_-^{+\beta})\big)
+ -\big(\partial_{\bm\theta}\mathcal E(\mathbf X_+^{-\beta})
+      +\partial_{\bm\theta}\mathcal E(\mathbf X_-^{-\beta})\big)\Big]
+$$
 
 Four load-bearing facts, each of which has bitten this repository before:
 
-1. **The outer cost carries no** :math:`\bm\theta`. :math:`U` is a linear functional of the vertex
-   positions alone, so :math:`\partial_{\bm\theta}\widehat{\mathcal C}|_{\mathbf X}=0` *exactly* and
+1. **The outer cost carries no** $\bm\theta$. $U$ is a linear functional of the vertex
+   positions alone, so $\partial_{\bm\theta}\widehat{\mathcal C}|_{\mathbf X}=0$ *exactly* and
    this collapses directly to the two bare parameter gradients. This is not
    a convenience: ``loss_function_outer`` is called without the parameters, and
-   ``_compute_ep_grads`` differentiates :math:`\mathcal E+\beta\mathcal C`, so a
-   :math:`\bm\theta`-dependent cost would lose its explicit term **silently**.
-2. **The** :math:`\beta` **convention is fixed**: nudges at :math:`\pm\beta`, prefactor
-   :math:`1/(2\beta)`. Never :math:`\beta/2` with prefactor :math:`1/\beta`; no factor of two is
+   ``_compute_ep_grads`` differentiates $\mathcal E+\beta\mathcal C$, so a
+   $\bm\theta$-dependent cost would lose its explicit term **silently**.
+2. **The** $\beta$ **convention is fixed**: nudges at $\pm\beta$, prefactor
+   $1/(2\beta)$. Never $\beta/2$ with prefactor $1/\beta$; no factor of two is
    ever reintroduced.
-3. **Every nudged solve is warm-started from its own free equilibrium, and the** :math:`+\beta`
-   **and** :math:`-\beta` **solves start from the same point.** That pairing is what makes EP's
-   residual error track the inner budget rather than :math:`\beta` — measured to be
-   :math:`\beta`-independent across five decades.
+3. **Every nudged solve is warm-started from its own free equilibrium, and the** $+\beta$
+   **and** $-\beta$ **solves start from the same point.** That pairing is what makes EP's
+   residual error track the inner budget rather than $\beta$ — measured to be
+   $\beta$-independent across five decades.
 4. **This is not two calls to** ``outer_eq_prop``. That routine performs its own free-and-nudged pair
    internally with a fixed partner and cannot express the alternation; the estimator above is
    evaluated directly from the four recorded states.
@@ -54,24 +55,24 @@ A ``src`` module must not import from ``analysis/``, and the CG configuration th
 with T1 enabled needs it: it chooses its own step and can otherwise move a vertex across whole cells
 in one iteration, breaking the incremental T1 detector.
 
-Choosing :math:`\beta`: it scales as :math:`a_0^2`, and this is not optional
+Choosing $\beta$: it scales as $a_0^2$, and this is not optional
 ---------------------------------------------------------------------------
 The cost is written on the compliance
-:math:`\widehat J=(U_+-U_-)/(2a_0)`, so its curvature in :math:`U` carries a factor
-:math:`1/(2a_0)^2`. At the frozen :math:`a_0=7\times10^{-4}` that is :math:`5.1\times10^{5}`, while
-the drive mode's own stiffness is :math:`\sum\hat c^2/J\approx4.3`. The nudge therefore **out-stiffens
-the tissue by four orders of magnitude at the conventional** :math:`\beta=10^{-2}`: the nudged solve
-drives :math:`\widehat{\mathcal C}` to zero and the state moves by exactly the distance to the target,
-**independently of** :math:`\beta`. Measured: :math:`\delta U/U=-9.27\%` at :math:`\beta=3\times10^{-3}`
-and :math:`-9.52\%` at :math:`\beta=1`, a 333-fold :math:`\beta` range. That is a hard constraint, not
-a nudge, and differencing two saturated states gives noise which :math:`1/(2\beta)` then amplifies —
-the estimator came out :math:`3\times10^{4}` times the finite-difference reference and scaled as
-:math:`1/\beta`.
+$\widehat J=(U_+-U_-)/(2a_0)$, so its curvature in $U$ carries a factor
+$1/(2a_0)^2$. At the frozen $a_0=7\times10^{-4}$ that is $5.1\times10^{5}$, while
+the drive mode's own stiffness is $\sum\hat c^2/J\approx4.3$. The nudge therefore **out-stiffens
+the tissue by four orders of magnitude at the conventional** $\beta=10^{-2}$: the nudged solve
+drives $\widehat{\mathcal C}$ to zero and the state moves by exactly the distance to the target,
+**independently of** $\beta$. Measured: $\delta U/U=-9.27\%$ at $\beta=3\times10^{-3}$
+and $-9.52\%$ at $\beta=1$, a 333-fold $\beta$ range. That is a hard constraint, not
+a nudge, and differencing two saturated states gives noise which $1/(2\beta)$ then amplifies —
+the estimator came out $3\times10^{4}$ times the finite-difference reference and scaled as
+$1/\beta$.
 
-**Linear response requires** :math:`\beta\,\dfrac{2}{(2a_0J_{\rm tgt})^2}\ll\dfrac{\sum\hat c^2}{J}`,
-i.e. :math:`\beta=O(a_0^2)` — here :math:`\beta\lesssim8\times10^{-5}`. Use
-:meth:`ShearRheologyOptimizer.beta_upper_bound` to compute it, and **verify linearity by halving**
-:math:`\beta` and checking that the response halves. A pilot :math:`\beta=0.01`, as used in
+**Linear response requires** $\beta\,\dfrac{2}{(2a_0J_{\rm tgt})^2}\ll\dfrac{\sum\hat c^2}{J}$,
+i.e. $\beta=O(a_0^2)$ — here $\beta\lesssim8\times10^{-5}$. Use
+`ShearRheologyOptimizer.beta_upper_bound` to compute it, and **verify linearity by halving**
+$\beta$ and checking that the response halves. A pilot $\beta=0.01$, as used in
 ``E2`` tension inference where the cost is not divided by a small amplitude, does not transfer.
 
 Diagnostics are not optional
@@ -79,7 +80,7 @@ Diagnostics are not optional
 Every phase returns ``‖∇ₓE‖`` for every solve, T1 event counts, the connectivity hash of each nudged
 state, ``β·Ĉ`` against the inner energy scale, and the relative state change. A compliance attached to
 an unconverged equilibrium is not a compliance, and EP's paired cancellation is only valid when the
-:math:`\pm\beta` solves cross the *same* T1 events — a connectivity mismatch invalidates that outer
+$\pm\beta$ solves cross the *same* T1 events — a connectivity mismatch invalidates that outer
 step and is **recorded, not repaired**.
 """
 
@@ -121,7 +122,7 @@ class ShearState:
     faces: Array
     grad_norm: float
     amplitude: float
-    """The mode amplitude :math:`U` of this state."""
+    """The mode amplitude $U$ of this state."""
     t1_events: int
     conn_hash: str
     seconds: float
@@ -130,32 +131,34 @@ class ShearState:
 
 @dataclass
 class ShearRheologyOptimizer:
-    r"""Design :math:`\bm\theta` so a periodic tissue attains a prescribed mode compliance.
+    r"""Design $\bm\theta$ so a periodic tissue attains a prescribed mode compliance.
 
     Args:
         energy_theta: the **undriven** vertex-model energy, in the six-argument inner-loss signature
             ``(vertTable, heTable, faceTable, vert_params, he_params, face_params)``. ``width`` and
             ``height`` are ``static_argnums`` throughout the library and must be closed over by the
             caller.
-        mode: the drive mode. Re-reference it from the :math:`a=0` relaxed state at each outer epoch
+        mode: the drive mode. Re-reference it from the $a=0$ relaxed state at each outer epoch
             and treat it as a constant of the estimator *within* the epoch.
         a0: drive amplitude, frozen by V4 before any design run.
         j_target: target compliance. **Derive it as** ``rheology.target_compliance(G_tgt, mode)``
             with ``G_tgt`` taken *on the measured forward curve*, so that
-            :math:`\widehat{\mathcal C}` starts :math:`O(1)`. Setting it to a bare constant makes
-            :math:`\beta\widehat{\mathcal C}` comparable to the whole energy and the "nudge" is then a
+            $\widehat{\mathcal C}$ starts $O(1)$. Setting it to a bare constant makes
+            $\beta\widehat{\mathcal C}$ comparable to the whole energy and the "nudge" is then a
             large perturbation — measured, and it invalidated an earlier P5 test.
-        beta: nudge magnitude. Code convention: solves at :math:`\pm\beta`, prefactor
-            :math:`1/(2\beta)`.
+        beta: nudge magnitude. Code convention: solves at $\pm\beta$, prefactor
+            $1/(2\beta)$.
         solver_factory: zero-argument callable returning a fresh optax solver for the inner solve.
-        width, height: box dimensions.
+        width: box width.
+        height: box height.
         min_dist_T1: T1 threshold.
-        free_iters, nudged_iters: inner iteration budgets. **Measure these, do not assume them.**
-            A warm-started driven solve does *not* converge quickly merely because it travels a short
+        free_iters: inner iteration budget of the free solves. See `nudged_iters`.
+        nudged_iters: inner iteration budget of the nudged solves. **Measure these, do not assume
+            them.** A warm-started driven solve does *not* converge quickly merely because it travels a short
             distance: CG's iteration count is set by the spectrum, and the drive excites the softest
             modes. Measured on the 72-cell production box, from a free state at
-            :math:`\|\nabla_xE\|\approx2\times10^{-13}`, the driven solve still needs ~5000
-            iterations for :math:`10^{-8}` and ~20000 for :math:`10^{-13}`.
+            $\|\nabla_xE\|\approx2\times10^{-13}$, the driven solve still needs ~5000
+            iterations for $10^{-8}$ and ~20000 for $10^{-13}$.
         theta_target: which parameter array is designed.
         update_t1: T1 during the inner solves. **On** for production — it is the fluidity mechanism.
         cap_vertex_step: per-step vertex displacement cap. Keep **True** with a line-search solver
@@ -231,10 +234,10 @@ class ShearRheologyOptimizer:
 
     # ------------------------------------------------------------ free phase
     def free_phase(self, vertices, edges, faces, params):  # noqa: ANN001, ANN201
-        r"""Relax the two conditions **independently** at :math:`\beta=0`.
+        r"""Relax the two conditions **independently** at $\beta=0$.
 
         Returns ``{+1: ShearState, -1: ShearState}``. These are the warm-start points for every
-        nudged solve, and the pair from which :math:`\widehat J` is read.
+        nudged solve, and the pair from which $\widehat J$ is read.
         """
         ref_sig = topology_signature(edges)
         out = {}
@@ -250,7 +253,7 @@ class ShearRheologyOptimizer:
 
         Each half-sweep minimises one condition with the **partner's amplitude frozen**, which is what
         makes the joint nudged equilibrium expressible against a one-mesh inner solver. Both the
-        :math:`+\beta` and :math:`-\beta` calls enter from the *same* free states, so their residuals
+        $+\beta$ and $-\beta$ calls enter from the *same* free states, so their residuals
         are correlated and largely cancel in the difference.
         """
         cur = {sgn: (free[sgn].vertices, free[sgn].edges, free[sgn].faces) for sgn in (+1, -1)}
@@ -292,10 +295,10 @@ class ShearRheologyOptimizer:
 
     # -------------------------------------------------------------- estimator
     def _theta_grad(self, state: ShearState, params, sgn: int) -> Array:  # noqa: ANN001
-        r"""":math:`\partial_{\bm\theta}\mathcal E` at a recorded state.
+        r"""$\partial_{\bm\theta}\mathcal E$ at a recorded state.
 
-        The drive carries no :math:`\bm\theta`, so this is the bare vertex-model parameter gradient —
-        but it is evaluated on the *driven* energy so that a future :math:`\bm\theta`-dependent drive
+        The drive carries no $\bm\theta$, so this is the bare vertex-model parameter gradient —
+        but it is evaluated on the *driven* energy so that a future $\bm\theta$-dependent drive
         could not silently drop a term.
         """
         driven = make_drive_energy(self.energy_theta, self.mode, sgn * self.a0)
@@ -319,31 +322,33 @@ class ShearRheologyOptimizer:
 
     # ------------------------------------------------------------ diagnostics
     def beta_upper_bound(self, j_measured: float, ratio: float = 0.1) -> float:
-        r"""Largest :math:`\beta` at which the nudge is still a perturbation, not a constraint.
+        r"""Largest $\beta$ at which the nudge is still a perturbation, not a constraint.
 
-        The nudge adds a stiffness :math:`\beta\cdot2/(2a_0J_{\rm tgt})^2` along the mode; the tissue's
-        own mode stiffness is :math:`\sum\hat c^2/J`. Linear response needs the first well below the
+        The nudge adds a stiffness $\beta\cdot2/(2a_0J_{\rm tgt})^2$ along the mode; the tissue's
+        own mode stiffness is $\sum\hat c^2/J$. Linear response needs the first well below the
         second, so
 
-        .. math:: \beta \le \text{ratio}\cdot\frac{\sum\hat c^2}{J}\cdot\frac{(2a_0J_{\rm tgt})^2}{2}
+        $$
+        \beta \le \text{ratio}\cdot\frac{\sum\hat c^2}{J}\cdot\frac{(2a_0J_{\rm tgt})^2}{2}
+        $$
 
         with ``ratio`` the tolerated stiffness fraction (0.1 by default). **This is a necessary
-        condition, not a sufficient one** — confirm linearity empirically by halving :math:`\beta` and
+        condition, not a sufficient one** — confirm linearity empirically by halving $\beta$ and
         checking that the state response halves.
         """
         k_mode = self.mode.c_sq / j_measured
         return ratio * k_mode * (2.0 * self.a0 * self.j_target) ** 2 / 2.0
 
     def compliance_and_cost(self, states) -> tuple[float, float]:  # noqa: ANN001
-        r"""":math:`(\widehat J, \widehat{\mathcal C})` from a pair of states."""
+        r"""$(\widehat J, \widehat{\mathcal C})$ from a pair of states."""
         j = float(compliance(states[+1].amplitude, states[-1].amplitude, self.a0))
         return j, float((j / self.j_target - 1.0) ** 2)
 
     def beta_diagnostics(self, free, nudged_plus) -> dict[str, float]:  # noqa: ANN001
         r"""The two numbers D2 requires to be logged at every outer step.
 
-        ``rel_state_change`` must sit in :math:`[10^{-4},10^{-2}]` and ``beta_cost_over_energy``
-        below :math:`10^{-2}`. Outside those the "nudge" is either invisible or is a large
+        ``rel_state_change`` must sit in $[10^{-4},10^{-2}]$ and ``beta_cost_over_energy``
+        below $10^{-2}$. Outside those the "nudge" is either invisible or is a large
         perturbation, and in both cases the estimator is not measuring what it claims to.
         """
         _j, c = self.compliance_and_cost(free)

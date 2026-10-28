@@ -67,6 +67,7 @@ class _BilevelOptimizer:
     """Abstract base class for Bi-level optimizers.
 
     Use the specialezed corresponding ones:
+
     - to optimize a `PbcMesh` use a `PbcBilevelOptimizer`,
     - to optimize  a `BoundedMesh` use a `BoundedBilevelOptimizer`.
     """
@@ -102,7 +103,7 @@ class _BilevelOptimizer:
         self.ep_variant: EPVariant = EPVariant.CENTERED
         """Which EP finite-difference form to use (EQUILIBRIUM_PROPAGATION only).
         CENTERED (default) is second-order in beta; ONE_SIDED is first-order and is
-        provided for ablation. See :class:`vertax.method_enum.EPVariant`."""
+        provided for ablation. See `vertax.method_enum.EPVariant`."""
         self.params_normalization: dict[str, float] | None = None
         """Mean-value normalization constraints, per parameter array, or None for no constraint.
 

@@ -19,7 +19,7 @@ def segment(image: NDArray, save: bool = False, output_path: str = "segmented_im
         output_path (str, optional): Where to save the segmentation on disk. Defaults to "segmented_image.tiff".
 
     Returns:
-        NDArray: The segmented image.
+        The segmented image.
     """
     from cellpose import models
 
@@ -45,7 +45,7 @@ def refine(segmented_image: NDArray) -> NDArray:
         segmented_image (NDArray): The segmentation with holes.
 
     Returns:
-        NDArray: A mask suitable for what comes next, with no holes.
+        A mask suitable for what comes next, with no holes.
     """
     # Relabel the mask
     labeled_mask: NDArray = label(segmented_image)
@@ -77,7 +77,7 @@ def mask_from_image(image: NDArray) -> NDArray:
         image (NDArray): The original image.
 
     Returns:
-        NDArray: The corresponding mask.
+        The corresponding mask.
     """
     return refine(segment(image))
 
@@ -91,7 +91,7 @@ def pad(mask: NDArray, save: bool = False, output_path: str = "padded_image.tiff
         output_path (str, optional): Where to save it. Defaults to "padded_image.tiff".
 
     Returns:
-        NDArray: The mask, padded around with mirrored reflections.
+        The mask, padded around with mirrored reflections.
     """
     # Apply reflect padding with the size of the image itself
     height, width = mask.shape  # imread tiff = Y is the first axis, X the second.

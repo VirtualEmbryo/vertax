@@ -64,7 +64,7 @@ class PbcMesh(Mesh):
             random_key (int): Set the random key for reproducibility.
 
         Returns:
-            Self: The corresponding mesh.
+            The corresponding mesh.
         """
         key = jax.random.PRNGKey(random_key)
         seeds = jnp.array((width, height)) * jax.random.uniform(key, (nb_seeds, 2))
@@ -130,10 +130,9 @@ class PbcMesh(Mesh):
             image (NDArray): The image which will act as a template for the mesh.
 
         Returns:
-            Self: The corresponding mesh.
-        
-        .. warning::
+            The corresponding mesh.
 
+        Warning:
             **Junction extraction is unreliable on real masks, and this method is currently
             unsupported for them.** It builds the mesh with
             `mask_analysis.find_vertices_edges_faces`, which keeps a label triple only where
@@ -145,7 +144,7 @@ class PbcMesh(Mesh):
             `V - E + F = 55` and **472 faces from 64 segmented cells**. On a raw microscopy crop,
             `V - E + F = 6`. A correct planar mesh gives 0.
 
-            For a segmented tissue, use :mod:`vertax.trace` instead, which extracts junctions on the
+            For a segmented tissue, use `vertax.trace` instead, which extracts junctions on the
             pixel-corner lattice and is tested against a stored reference.
 
             **The gap is real and `vertax.trace` does not close it.** `trace` produces a *clamped
@@ -153,7 +152,6 @@ class PbcMesh(Mesh):
             currently **no working route from an image to a periodic mesh**. Substituting the
             corner-lattice extraction here is the intended fix; it is deferred, and its three
             preconditions are recorded in the freeze checklist.
-
         """
         return cls.from_mask(mask_from_image(image))
 
@@ -170,10 +168,9 @@ class PbcMesh(Mesh):
             mask (NDArray): The mask with no holes which will act as a template for the mesh.
 
         Returns:
-            Self: The corresponding mesh.
-        
-        .. warning::
+            The corresponding mesh.
 
+        Warning:
             **Junction extraction is unreliable on real masks, and this method is currently
             unsupported for them.** It builds the mesh with
             `mask_analysis.find_vertices_edges_faces`, which keeps a label triple only where
@@ -185,7 +182,7 @@ class PbcMesh(Mesh):
             `V - E + F = 55` and **472 faces from 64 segmented cells**. On a raw microscopy crop,
             `V - E + F = 6`. A correct planar mesh gives 0.
 
-            For a segmented tissue, use :mod:`vertax.trace` instead, which extracts junctions on the
+            For a segmented tissue, use `vertax.trace` instead, which extracts junctions on the
             pixel-corner lattice and is tested against a stored reference.
 
             **The gap is real and `vertax.trace` does not close it.** `trace` produces a *clamped
@@ -193,7 +190,6 @@ class PbcMesh(Mesh):
             currently **no working route from an image to a periodic mesh**. Substituting the
             corner-lattice extraction here is the intended fix; it is deferred, and its three
             preconditions are recorded in the freeze checklist.
-
         """
         padded_mask = pad(mask, save=False, output_path="refined_and_padded_image.tiff")
         # Find vertices, edges, faces
@@ -384,7 +380,7 @@ class PbcMesh(Mesh):
             path (str): Path to the mesh file (.npz), numpy format.
 
         Returns:
-            Mesh: the mesh loaded from the numpy .npz file.
+            The mesh loaded from the numpy .npz file.
         """
         mesh_file = np.load(path)
         mesh = cls._create()
@@ -473,7 +469,7 @@ class PbcMesh(Mesh):
                     Defaults to "constants.txt".
 
         Returns:
-            Self: The loaded mesh.
+            The loaded mesh.
         """
         dirpath = Path(directory)
         dirpath.mkdir(parents=True, exist_ok=True)

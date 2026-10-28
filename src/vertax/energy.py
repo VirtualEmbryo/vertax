@@ -3,12 +3,14 @@
 They can be user defined functions but they have to respect a strict signature.
 
 For a `PbcMesh` and `PbcBilevelOptimizer`, the energy function must have the following signature:
+
     vertTable: Array,
     heTable: Array,
     faceTable: Array,
     vert_params: Array,
     he_params: Array,
     face_params: Array,
+
 and return an Array (or float).
 
 The names can vary and you can give default parameters. But the number and type of parameters is important.
@@ -16,6 +18,7 @@ You don't have to use every parameters but they all have to be here.
 An unused parameters can of course also have the type None.
 
 Same for `BoundedMesh` and `BoundedBilevelOptimizer`, but with a slightly different signature:
+
     vertTable: Array,
     angTable: Array,
     heTable: Array,
@@ -26,6 +29,7 @@ Same for `BoundedMesh` and `BoundedBilevelOptimizer`, but with a slightly differ
     vert_params: Array,
     he_params: Array,
     face_params: Array,
+
 and return an Array (or float).
 
 Hopefully the variable names are self-explanatory.
@@ -93,13 +97,14 @@ def energy_shape_factor_hetero(
 def make_energy_shape_factor(lambda_area: float | Array = 1.0) -> Callable:
     r"""Factory for the periodic E1 energy with an **explicit** area stiffness.
 
-    Returns a callable with the signature of :func:`energy_shape_factor_hetero`, implementing
+    Returns a callable with the signature of `energy_shape_factor_hetero`, implementing
 
-    .. math::
-        E_1 = \sum_\alpha \lambda_A\,(A_\alpha - 1)^2 + (P_\alpha - p^0_\alpha)^2 ,
+    $$
+    E_1 = \sum_\alpha \lambda_A\,(A_\alpha - 1)^2 + (P_\alpha - p^0_\alpha)^2 ,
+    $$
 
-    with ``face_params`` holding the per-cell preferred perimeter :math:`p^0_\alpha`. At
-    ``lambda_area = 1`` it is :func:`energy_shape_factor_hetero` exactly.
+    with ``face_params`` holding the per-cell preferred perimeter $p^0_\alpha$. At
+    ``lambda_area = 1`` it is `energy_shape_factor_hetero` exactly.
 
     ``lambda_area`` is closed over, not stored at module level, and it is never converted to a
     Python float, so it may be a traced array. That is what makes it trainable: an energy that
@@ -157,9 +162,10 @@ def make_energy_line_tensions(K_areas: float) -> Callable:
     Returns the function ``energy_line_tensions(vertTable, heTable, faceTable, width, height,
     he_params, face_params)``, implementing exactly
 
-    .. math::
-        E_2 = \tfrac12\sum_{he}\Lambda_{he}\,\ell_{he}
-            + \tfrac{K}{2}\sum_\alpha (A_\alpha - A^0_\alpha)^2 ,
+    $$
+    E_2 = \tfrac12\sum_{he}\Lambda_{he}\,\ell_{he}
+        + \tfrac{K}{2}\sum_\alpha (A_\alpha - A^0_\alpha)^2 ,
+    $$
 
     where the leading 1/2 on the tension term cancels the half-edge double count, so
     ``he_params`` stores the physical per-edge tension directly.
@@ -231,9 +237,10 @@ def _inner_edge_energy(edge: Array, tension: Array, vertTable: Array, heTable: A
 def make_energy_line_tensions_bounded(K_areas: float, *, sigmoid_tensions: bool = False) -> Callable:
     r"""Factory for the bounded E2 energy, in the **same** convention as the periodic one.
 
-    .. math::
-        E_2 = \sum_{\text{edges}}\Lambda_e\,\ell_e
-            + \tfrac{K}{2}\sum_\alpha (A_\alpha - A^0_\alpha)^2 .
+    $$
+    E_2 = \sum_{\text{edges}}\Lambda_e\,\ell_e
+        + \tfrac{K}{2}\sum_\alpha (A_\alpha - A^0_\alpha)^2 .
+    $$
 
     In this convention:
 

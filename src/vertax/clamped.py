@@ -338,7 +338,7 @@ def relax(E, patch: ClampedPatch, K: float, maxiter: int = 30000, gtol: float = 
         A dict of the converged state and its diagnostics. Beyond the obvious keys:
 
         * `r_eq` — residual under `E_exact`; `r_eq_smoothed` — under `E`; `r_eq_obs` — at the
-          **observed** configuration, i.e. before relaxing, which is the force-inference residual.
+            **observed** configuration, i.e. before relaxing, which is the force-inference residual.
         * `min_area` is **signed**: a negative value means a face has inverted.
         * `r_eq_excl_T1`, `n_free_at_T1`, `n_free_kept` — see the note in the body on blocked T1s.
     """

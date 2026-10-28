@@ -1118,7 +1118,7 @@ def _compute_ep_grads(
     takes their difference, adds any ``params_regularizer`` gradient, and returns the
     parameter and gradient dicts ready for an optax ``solver_outer.update`` call.
 
-    The estimator is selected by ``ep_variant`` (see :class:`EPVariant`):
+    The estimator is selected by ``ep_variant`` (see `EPVariant`):
 
     * ``CENTERED`` (default, recommended) -- solve at ``-beta`` and ``+beta``, divide by
       ``2*beta``. Second order: the leading O(beta) bias cancels, leaving O(beta**2).

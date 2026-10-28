@@ -3,6 +3,7 @@
 A cost function can be any user-defined function but it has to respect a strict signature.
 
 For a `PbcMesh` and `PbcBilevelOptimizer`, the cost function must have the following signature:
+
     vertTable: Array,
     heTable: Array,
     faceTable: Array,
@@ -15,6 +16,7 @@ For a `PbcMesh` and `PbcBilevelOptimizer`, the cost function must have the follo
     selected_hes: Array | None,
     selected_faces: Array | None,
     image_target: Array | None,
+
 and return an Array (or float).
 
 The names can vary and you can give default parameters. But the number and type of parameters is important.
@@ -22,6 +24,7 @@ You don't have to use every parameters but they all have to be here.
 An unused parameters can of course also have the type None.
 
 Same for `BoundedMesh` and `BoundedBilevelOptimizer`, but with a slightly different signature:
+
     vertTable: Array,
     angTable: Array,
     heTable: Array,
@@ -34,6 +37,7 @@ Same for `BoundedMesh` and `BoundedBilevelOptimizer`, but with a slightly differ
     selected_hes: Array | None,
     selected_faces: Array | None,
     image_target: Array | None,
+
 and return an Array (or float).
 
 Hopefully the variable names are self-explanatory.
@@ -237,7 +241,7 @@ def cost_v2v(
     def squared_distance(v: Array, vertTable: Array, vertTable_target: Array, width: float, height: float) -> Array:
         """Nearest-periodic-image squared distance for vertex ``v`` -- the C_v2v summand.
 
-        Delegates to :func:`vertax.geo.min_image_sq_dist`, which documents why this must not be
+        Delegates to `vertax.geo.min_image_sq_dist`, which documents why this must not be
         respelled as a min over nine scalars, nor as ``(min sqrt(u))**2``. The
         same helper is used by the periodic T1 swap-repair criterion so the two cannot drift.
         """
@@ -275,10 +279,10 @@ def cost_mesh2image(
 
     This is the direct entry point, and it is the one to use when `sigma_psf` is itself being
     optimized. For the fixed-width 12-argument outer-cost protocol used by the optimizers, use
-    :func:`make_cost_mesh2image`, which closes over the width instead.
+    `make_cost_mesh2image`, which closes over the width instead.
 
     Every result recorded before the width became an argument was produced at
-    :data:`LEGACY_PSF_SIGMA`; pass that value to reproduce one.
+    `LEGACY_PSF_SIGMA`; pass that value to reproduce one.
     """
     wh = jnp.asarray([width, height])
     starting = (vertTable[heTable[selected_hes, 3], :2]) * 2 / wh  # (M, 2)
@@ -318,11 +322,11 @@ def cost_mesh2image(
 def make_cost_mesh2image(sigma_psf: float):
     """Bind a PSF width to `cost_mesh2image`, giving the 12-argument outer-cost protocol form.
 
-    Parallel to :func:`make_cost_dmic`. The closure is a convenience for the case where the PSF
+    Parallel to `make_cost_dmic`. The closure is a convenience for the case where the PSF
     width is FIXED, which is what the bilevel optimizers' 12-argument protocol assumes. It is
     deliberately not the traceable entry point for a TRAINABLE width -- closing over `sigma_psf`
     makes it a constant of the returned function. To differentiate with respect to the PSF width,
-    call :func:`cost_mesh2image` directly and pass the width as its thirteenth argument.
+    call `cost_mesh2image` directly and pass the width as its thirteenth argument.
 
     Args:
         sigma_psf: PSF standard deviation, in the units of the box the Fourier grid spans.
@@ -499,8 +503,9 @@ def topological_distance(
     algorithm (cell labels are arbitrary), and counts the cell--cell contacts on which the two
     meshes then disagree, each unordered pair once:
 
-    .. math::
-        d_{topo} = \sum_{a<b} \bigl| A^{(1)}_{ab} - A^{(2)}_{\sigma(a)\sigma(b)} \bigr| .
+    $$
+    d_{topo} = \sum_{a<b} \bigl| A^{(1)}_{ab} - A^{(2)}_{\sigma(a)\sigma(b)} \bigr| .
+    $$
 
     An elementary T1 transition destroys exactly one contact and creates exactly one other, so it
     changes **two** upper-triangle entries. Therefore ``d_topo`` is always **even**, and
@@ -511,7 +516,7 @@ def topological_distance(
     gradient, so it cannot be assigned to ``loss_function_outer``. Use it to quantify topological
     distance and to time phase switches in a staged schedule. Separately, any purely topological or
     edge-level cost is a strict information loss for edge-tension inference relative to a
-    vertex-level cost such as :func:`cost_v2v` -- the cell-adjacency Laplacian has a large null
+    vertex-level cost such as `cost_v2v` -- the cell-adjacency Laplacian has a large null
     space -- so topology should not be used to infer tensions in the first place.
     """
 
@@ -633,7 +638,8 @@ def render_interface_image(
     Args:
         vertices: `(n_v, >=2)` vertex table; only the first two columns are used.
         heTable: half-edge table; columns 3 and 4 are the endpoints and 6, 7 the periodic offsets.
-        width, height: box dimensions, in the same physical units as `vertices`.
+        width: box width, in the same physical units as `vertices`.
+        height: box height, in the same physical units as `vertices`.
         resolution: pixels per axis. The image is `(resolution, resolution)`.
         sigma_psf: PSF standard deviation **in physical units, not pixels** -- so the physical
             problem does not change when the resolution does, which was a defect of the previous

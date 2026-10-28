@@ -8,9 +8,11 @@ The method
 ----------
 Apply a force along one axis, modulated sinusoidally along another,
 
-.. math:: f_x(y) = a\cos(q y),\qquad q = q_n = 2\pi n/H,
+$$
+f_x(y) = a\cos(q y),\qquad q = q_n = 2\pi n/H,
+$$
 
-which puts :math:`+a` at :math:`y=0` and :math:`-a` at :math:`y=H/2`: **two counter-driven bands per
+which puts $+a$ at $y=0$ and $-a$ at $y=H/2$: **two counter-driven bands per
 box**, hence two shear slabs, one interior and one closed through the periodic boundary. The total
 force vanishes by symmetry, so no wall and no reaction boundary is needed. This is the *periodic
 perturbation method* of non-equilibrium molecular dynamics (Gosling 1973; Hess 2002; GROMACS
@@ -18,48 +20,50 @@ perturbation method* of non-equilibrium molecular dynamics (Gosling 1973; Hess 2
 
 VertAX minimises an energy, so the drive is applied as the Lagrangian potential
 
-.. math:: \mathcal E_{\rm drive}(\mathbf X;a) = -a\sum_i \hat c_i\,\Delta x_i ,
-          \qquad \hat c_i = \cos(q y^0_i) - \tfrac1N\textstyle\sum_j\cos(q y^0_j),
+$$
+\mathcal E_{\rm drive}(\mathbf X;a) = -a\sum_i \hat c_i\,\Delta x_i ,
+\qquad \hat c_i = \cos(q y^0_i) - \tfrac1N\textstyle\sum_j\cos(q y^0_j),
+$$
 
 with the weights frozen on the material points of the undriven reference state and
-:math:`\Delta x_i` the **minimum-image** displacement from :math:`x^0_i`.
+$\Delta x_i$ the **minimum-image** displacement from $x^0_i$.
 
-Two details are load-bearing, and both are asserted rather than assumed (see :func:`make_shear_mode`
-and :func:`min_image_delta_x`):
+Two details are load-bearing, and both are asserted rather than assumed (see `make_shear_mode`
+and `min_image_delta_x`):
 
 * **Mean removal is mandatory.** Without it the drive carries a net force along the polarisation
   axis, the uniform translation mode is unbounded below, and the inner minimisation runs away.
 * **Minimum image is mandatory.** ``geo.update_pbc`` re-wraps any vertex leaving the box at *every*
-  inner iteration, so a term linear in the raw coordinate jumps by :math:`\pm a\hat c_i W` whenever a
+  inner iteration, so a term linear in the raw coordinate jumps by $\pm a\hat c_i W$ whenever a
   vertex crosses the seam.
 
 Because the observable is a linear functional of vertex positions with **no** parameter dependence,
-:math:`\partial_{\bm\theta}\mathcal C|_{\mathbf X}=0` exactly. That is what makes the existing
-centered-EP core correct for this problem unmodified. A :math:`\bm\theta`-dependent outer cost would
-instead need the implicit :math:`\partial\mathbf X/\partial\bm\theta` term at the equilibrium;
+$\partial_{\bm\theta}\mathcal C|_{\mathbf X}=0$ exactly. That is what makes the existing
+centered-EP core correct for this problem unmodified. A $\bm\theta$-dependent outer cost would
+instead need the implicit $\partial\mathbf X/\partial\bm\theta$ term at the equilibrium;
 dropping it silently would corrupt the estimator, which is why this cost is kept purely positional.
 
 Conventions and gotchas
 -----------------------
-* **Everything here assumes ``float64``.** Call :func:`require_float64` in any driver. Enable x64
+* **Everything here assumes ``float64``.** Call `require_float64` in any driver. Enable x64
   before the first JAX array is created and ``PbcMesh.vertices`` is then built in ``float64`` too
   (meshes follow JAX's default float dtype); no cast after construction is needed.
 * **Unsliced tables only.** ``opt._jit_minimize`` calls the inner loss as
   ``L_in(vt[selected_verts], ..., fp[selected_faces])`` while taking its *gradient* on the unsliced
   tables. The drive term indexes vertices positionally, so a partial ``selected_verts`` would
-  silently mis-pair weights and vertices. :func:`make_drive_energy` therefore raises on a row-count
+  silently mis-pair weights and vertices. `make_drive_energy` therefore raises on a row-count
   mismatch rather than broadcasting.
-* **Report ``G``, optimise ``J``.** :math:`G=\rho_v/(Jq^2)` is hyperbolic in the stiff limit
-  (:math:`U\to0`); the compliance is linear in the vertex positions.
+* **Report ``G``, optimise ``J``.** $G=\rho_v/(Jq^2)$ is hyperbolic in the stiff limit
+  ($U\to0$); the compliance is linear in the vertex positions.
 * **T1 transitions are enabled**, not frozen — physically because they are the fluidity mechanism,
-  numerically because freezing them drives :math:`\eta\lambda_{\max}` to the SGD stability bound
+  numerically because freezing them drives $\eta\lambda_{\max}$ to the SGD stability bound
   (measured directly). With T1 on, a
   compliance measured across an event is a **secant, possibly plastic** compliance, not a linear
-  elastic constant. Use :func:`topology_signature` / :func:`t1_event_count` to stratify; never pool.
+  elastic constant. Use `topology_signature` / `t1_event_count` to stratify; never pool.
 
 The drive is **linear in X and contributes nothing to the Hessian**, so ``a0`` cannot move the
 stability bound. The EP nudge term is quadratic and adds a small positive rank-one piece, so
-:math:`\eta\lambda_{\max}` must be checked at the nudged level too.
+$\eta\lambda_{\max}$ must be checked at the nudged level too.
 """
 
 from __future__ import annotations
@@ -128,36 +132,36 @@ def require_float64() -> None:
 class ShearMode:
     r"""A single Fourier drive mode: which axis is modulated, which is driven, and the weights.
 
-    ``mod_axis`` selects the modulation direction (0 = :math:`\cos(qx)`, 1 = :math:`\cos(qy)`) and
+    ``mod_axis`` selects the modulation direction (0 = $\cos(qx)$, 1 = $\cos(qy)$) and
     ``pol_axis`` the polarisation of the force and of the observed displacement. The four
     combinations give three independent constants of an orthotropic 2D tissue:
 
-    ===============  ==============  ============  ==========
-    modulation       polarisation    character     constant
-    ===============  ==============  ============  ==========
-    ``cos(qy)``      ``x``           transverse    ``C66 = G``
-    ``cos(qx)``      ``y``           transverse    ``C66`` (consistency check)
-    ``cos(qy)``      ``y``           longitudinal  ``C22``
-    ``cos(qx)``      ``x``           longitudinal  ``C11``
-    ===============  ==============  ============  ==========
+    | modulation    | polarisation | character    | constant                      |
+    | ------------- | ------------ | ------------ | ----------------------------- |
+    | ``cos(qy)``   | ``x``        | transverse   | ``C66 = G``                   |
+    | ``cos(qx)``   | ``y``        | transverse   | ``C66`` (consistency check)   |
+    | ``cos(qy)``   | ``y``        | longitudinal | ``C22``                       |
+    | ``cos(qx)``   | ``x``        | longitudinal | ``C11``                       |
 
     Attributes:
-        c: Mean-removed weights :math:`\hat c_i`, one per vertex, frozen on the reference state.
+        c: Mean-removed weights $\hat c_i$, one per vertex, frozen on the reference state.
         r0: Reference vertex positions, shape ``(N, 2)``.
-        q: Wavevector :math:`2\pi n/L_{\rm mod}`.
+        q: Wavevector $2\pi n/L_{\rm mod}$.
         n: Mode index.
-        width, height: Box dimensions.
-        mod_axis, pol_axis: See above.
-        rho_v: Vertex number density :math:`N/(WH)` — the force-balance calibration constant.
-        c_sq: :math:`\sum_i\hat c_i^2`.
-        c_sq_ratio: :math:`2\sum\hat c_i^2/N`. **Finite-size diagnostic, not a correction factor.**
-            The continuum calibration :math:`G=\rho_v/(Jq^2)` follows from force balance
-            (:math:`f_x(y)=a\rho_v\cos qy`) and is the definition used here. Equating the *discrete*
-            drive energy :math:`-aU\sum\hat c_i^2` to the continuum :math:`-\tfrac12 FUWH` instead
-            gives :math:`F=2a\sum\hat c_i^2/(WH)`, i.e. the same thing multiplied by this ratio. The
+        width: Box dimensions.
+        height: Box dimensions.
+        mod_axis: See above.
+        pol_axis: See above.
+        rho_v: Vertex number density $N/(WH)$ — the force-balance calibration constant.
+        c_sq: $\sum_i\hat c_i^2$.
+        c_sq_ratio: $2\sum\hat c_i^2/N$. **Finite-size diagnostic, not a correction factor.**
+            The continuum calibration $G=\rho_v/(Jq^2)$ follows from force balance
+            ($f_x(y)=a\rho_v\cos qy$) and is the definition used here. Equating the *discrete*
+            drive energy $-aU\sum\hat c_i^2$ to the continuum $-\tfrac12 FUWH$ instead
+            gives $F=2a\sum\hat c_i^2/(WH)$, i.e. the same thing multiplied by this ratio. The
             two routes agree exactly only for a uniform vertex distribution, so a ratio far from 1
             measures the density fluctuation the continuum calibration neglects, at
-            :math:`O(N^{-1/2})`. Report it; do not silently divide by it.
+            $O(N^{-1/2})$. Report it; do not silently divide by it.
     """
 
     c: Array
@@ -200,9 +204,9 @@ def make_shear_mode(
 ) -> ShearMode:
     r"""Build a drive mode from the **undriven reference configuration**.
 
-    The weights are attached to material points, so ``vertices`` must be the *relaxed* :math:`a=0`
+    The weights are attached to material points, so ``vertices`` must be the *relaxed* $a=0$
     state, and the mode must be re-referenced whenever that state moves appreciably (the drift
-    diagnostic is :func:`drive_drift`).
+    diagnostic is `drive_drift`).
 
     Args:
         vertices: Reference positions, shape ``(N, 2)`` — the relaxed ``a = 0`` state.
@@ -211,7 +215,7 @@ def make_shear_mode(
         n: Mode index; ``q = 2*pi*n / L_mod``.
         mod_axis: 0 for ``cos(qx)``, 1 for ``cos(qy)``.
         pol_axis: 0 to drive/observe ``x``, 1 to drive/observe ``y``.
-        mean_tol: Tolerance on :math:`|\sum_i\hat c_i|`.
+        mean_tol: Tolerance on $|\sum_i\hat c_i|$.
 
     Raises:
         ValueError: If the mean-removal assertion fails, or the axes are not in ``{0, 1}``, or
@@ -251,7 +255,7 @@ def make_shear_mode(
 
 
 def min_image_delta_x(x: Array, x0: Array, period: float) -> Array:
-    r"""Minimum-image displacement ``x - x0`` wrapped into the half-open :math:`[-L/2, +L/2)`.
+    r"""Minimum-image displacement ``x - x0`` wrapped into the half-open $[-L/2, +L/2)$.
 
     Spelled ``d - L*floor(d/L + 1/2)``. Three properties matter, and V0 checks all three:
 
@@ -261,8 +265,8 @@ def min_image_delta_x(x: Array, x0: Array, period: float) -> Array:
       everywhere.
     * **It is exactly invariant under a lattice translation**, at every point including the
       tie. The obvious spelling ``d - L*round(d/L)`` is *not*: ``round`` is half-to-even, so it maps
-      both :math:`\pm L/2` to themselves, the interval comes out closed, and the two representatives
-      at exactly :math:`d=L/2` differ by one lattice vector, :math:`|\Delta|=L`. The physics is
+      both $\pm L/2$ to themselves, the interval comes out closed, and the two representatives
+      at exactly $d=L/2$ differ by one lattice vector, $|\Delta|=L$. The physics is
       untouched -- either representative is a valid minimum image -- but an exact invariance is
       worth more than a caveat, which is why the half-open interval is used here.
     * **It is not a nine-image ``jnp.min`` reduction**, deliberately: that form has a kink whose AD
@@ -296,7 +300,7 @@ def make_drive_energy(
 
     Returns:
         A callable with the same six-argument signature, adding
-        :math:`-a\sum_i\hat c_i\Delta r_i^{\rm pol}`.
+        $-a\sum_i\hat c_i\Delta r_i^{\rm pol}$.
 
     The returned energy raises on a vertex-row-count mismatch. That converts the one silent failure
     mode of this construction — a partial ``selected_verts``, which slices ``vertTable`` and so
@@ -334,35 +338,35 @@ def make_drive_energy(
 
 def mode_amplitude(vertices: Array, mode: ShearMode) -> Array:
     r"""Amplitude of the driven Fourier component of the displacement field,
-    :math:`U=\sum_i\hat c_i\Delta r_i/\sum_i\hat c_i^2` — a **linear** functional of the positions.
+    $U=\sum_i\hat c_i\Delta r_i/\sum_i\hat c_i^2$ — a **linear** functional of the positions.
     """
     delta = min_image_delta_x(vertices[:, mode.pol_axis], mode.r0[:, mode.pol_axis], mode.pol_period)
     return jnp.sum(mode.c * delta) / mode.c_sq
 
 
 def compliance(u_plus: Array | float, u_minus: Array | float, a0: float) -> Array:
-    r"""Mode compliance :math:`J=(U_+-U_-)/(2a_0)` from the antisymmetric pair.
+    r"""Mode compliance $J=(U_+-U_-)/(2a_0)$ from the antisymmetric pair.
 
-    The pair removes the :math:`a=0` offset that any finite disordered mesh carries, and with it the
-    leading :math:`O(a_0^2)` nonlinearity. Note :math:`\Delta r^+_i-\Delta r^-_i=r^+_i-r^-_i`
+    The pair removes the $a=0$ offset that any finite disordered mesh carries, and with it the
+    leading $O(a_0^2)$ nonlinearity. Note $\Delta r^+_i-\Delta r^-_i=r^+_i-r^-_i$
     exactly, so ``J`` does not depend on the reference positions at all — only the weights do.
     """
     return (u_plus - u_minus) / (2.0 * a0)
 
 
 def modulus_from_compliance(j: Array | float, mode: ShearMode) -> Array:
-    r"""Apparent modulus at the mode's wavevector, :math:`G_n=\rho_v/(Jq_n^2)`.
+    r"""Apparent modulus at the mode's wavevector, $G_n=\rho_v/(Jq_n^2)$.
 
     This is the force-balance calibration. See
-    :attr:`ShearMode.c_sq_ratio` for the discrete-vs-continuum diagnostic that must be *reported*
-    beside it rather than folded into it. ``G`` diverges as :math:`J\to0`, which is exactly why the
+    `ShearMode.c_sq_ratio` for the discrete-vs-continuum diagnostic that must be *reported*
+    beside it rather than folded into it. ``G`` diverges as $J\to0$, which is exactly why the
     outer cost is written on ``J``.
     """
     return mode.rho_v / (jnp.asarray(j) * mode.q**2)
 
 
 def target_compliance(g_target: float, mode: ShearMode) -> float:
-    r"""Compliance target :math:`J_{\rm tgt}=\rho_v/(G_{\rm tgt}q^2)` for a modulus target."""
+    r"""Compliance target $J_{\rm tgt}=\rho_v/(G_{\rm tgt}q^2)$ for a modulus target."""
     if g_target <= 0:
         msg = (
             f"G_target must be > 0; got {g_target}. A zero-modulus target is the degenerate "
@@ -380,11 +384,11 @@ def make_compliance_cost(
     partner_amplitude: float,
     sign: Literal[1, -1],
 ) -> Callable[..., Array]:
-    r"""Outer loss :math:`\mathcal C=(\hat J/J_{\rm tgt}-1)^2` for **one** condition of the pair.
+    r"""Outer loss $\mathcal C=(\hat J/J_{\rm tgt}-1)^2$ for **one** condition of the pair.
 
     The partner condition's amplitude is frozen and captured by closure, which is what makes the
     block-coordinate alternation expressible against the library's one-mesh outer loss.
-    ``sign = +1`` for the :math:`+a_0` condition, ``-1`` for :math:`-a_0`.
+    ``sign = +1`` for the $+a_0$ condition, ``-1`` for $-a_0$.
 
     Returns a callable with the exact twelve-argument ``opt.OuterLossFunction`` signature. It uses
     only ``vertTable``: the cost has **no** parameter dependence, by construction, which is the
@@ -425,9 +429,9 @@ def make_compliance_cost(
 
 
 def half_edge_vectors(vertices: Array, edges: Array, width: float, height: float) -> Array:
-    r"""Per-half-edge vector :math:`\mathbf d_{he}=(\mathbf x_{\rm tgt}+\mathbf n L)-\mathbf x_{\rm src}`.
+    r"""Per-half-edge vector $\mathbf d_{he}=(\mathbf x_{\rm tgt}+\mathbf n L)-\mathbf x_{\rm src}$.
 
-    Columns 3/4 of ``heTable`` are source/target vertex, 6/7 the :math:`\pm1` box offsets — the same
+    Columns 3/4 of ``heTable`` are source/target vertex, 6/7 the $\pm1$ box offsets — the same
     convention ``geo.get_length`` uses, and read from the same columns so the two cannot drift.
     """
     src = edges[:, 3].astype(jnp.int32)
@@ -469,22 +473,22 @@ def virial_stress(
     he_tensions: Array,
     iso_coeff: Array | float,
 ) -> Array:
-    r"""Assemble :math:`A\,\sigma_{ij}=\sum_{he}T_{he}\,d_i d_j/\ell + \delta_{ij}c_{\rm iso}`.
+    r"""Assemble $A\,\sigma_{ij}=\sum_{he}T_{he}\,d_i d_j/\ell + \delta_{ij}c_{\rm iso}$.
 
-    **Why the naive definition vanishes.** :math:`\bm\sigma=A^{-1}\mathbf X^\top\nabla_1\mathcal E`
+    **Why the naive definition vanishes.** $\bm\sigma=A^{-1}\mathbf X^\top\nabla_1\mathcal E$
     is correct for an affine strain of the *stored coordinates* alone — and it is identically zero at
-    any relaxed configuration, because that is what :math:`\nabla_1\mathcal E=0` means. Under PBC an
+    any relaxed configuration, because that is what $\nabla_1\mathcal E=0$ means. Under PBC an
     affine strain must act on the **box vectors** too, and the missing term
-    :math:`\mathbf h^\top\partial\mathcal E/\partial\mathbf h` is the entire signal. The Born/virial
+    $\mathbf h^\top\partial\mathcal E/\partial\mathbf h$ is the entire signal. The Born/virial
     form used here is that term, written per edge: it is the derivative with respect to the edge
     vectors, which do respond to a box strain.
 
-    ``he_tensions`` is :math:`\partial\mathcal E/\partial\ell_{he}` per **half-edge**, so the factor
+    ``he_tensions`` is $\partial\mathcal E/\partial\ell_{he}$ per **half-edge**, so the factor
     conventions of the energy (the leading 1/2 that cancels the half-edge double count in ``E2``; the
     two-faces-per-edge sum in ``E1``) are inherited from the energy rather than re-derived here.
-    ``iso_coeff`` is the :math:`\delta_{ij}` coefficient from the area terms.
+    ``iso_coeff`` is the $\delta_{ij}$ coefficient from the area terms.
 
-    Returns the ``(2, 2)`` stress. The normalising area is the **box** area :math:`WH`; compare it
+    Returns the ``(2, 2)`` stress. The normalising area is the **box** area $WH$; compare it
     against ``face_areas(...).sum()`` as a mesh-consistency check.
     """
     d = half_edge_vectors(vertices, edges, width, height)
@@ -507,12 +511,12 @@ def virial_stress_e2(
 ) -> Array:
     r"""Virial stress for the periodic ``E2`` energy of ``energy.make_energy_line_tensions``.
 
-    :math:`\mathcal E_2=\tfrac12\sum_{he}\Lambda_{he}\ell_{he}+\tfrac K2\sum_\alpha(A_\alpha-A^0_\alpha)^2`
-    gives :math:`\partial\mathcal E/\partial\ell_{he}=\tfrac12\Lambda_{he}` and, from a uniform
-    dilation :math:`A\to(1+\varepsilon)^2A`, the isotropic coefficient
-    :math:`K\sum_\alpha(A_\alpha-A^0_\alpha)A_\alpha`. The latter is
-    :math:`-\sum_\alpha P_\alpha A_\alpha` with the cell pressure
-    :math:`P_\alpha=-K(A_\alpha-A^0_\alpha)`: the Batchelor tissue stress, ported to periodic tables.
+    $\mathcal E_2=\tfrac12\sum_{he}\Lambda_{he}\ell_{he}+\tfrac K2\sum_\alpha(A_\alpha-A^0_\alpha)^2$
+    gives $\partial\mathcal E/\partial\ell_{he}=\tfrac12\Lambda_{he}$ and, from a uniform
+    dilation $A\to(1+\varepsilon)^2A$, the isotropic coefficient
+    $K\sum_\alpha(A_\alpha-A^0_\alpha)A_\alpha$. The latter is
+    $-\sum_\alpha P_\alpha A_\alpha$ with the cell pressure
+    $P_\alpha=-K(A_\alpha-A^0_\alpha)$: the Batchelor tissue stress, ported to periodic tables.
     """
     areas = face_areas(vertices, edges, faces, width, height)
     iso = k_areas * jnp.sum((areas - face_params) * areas)
@@ -529,12 +533,12 @@ def virial_stress_e1(
 ) -> Array:
     r"""Virial stress for the periodic ``E1`` energy (``energy.energy_shape_factor_*``).
 
-    :math:`\mathcal E_1=\sum_\alpha[(A_\alpha-1)^2+(P_\alpha-p^0_\alpha)^2]` gives an effective
-    half-edge tension :math:`2(P_{\alpha(he)}-p^0_{\alpha(he)})`, where :math:`\alpha(he)` is the
+    $\mathcal E_1=\sum_\alpha[(A_\alpha-1)^2+(P_\alpha-p^0_\alpha)^2]$ gives an effective
+    half-edge tension $2(P_{\alpha(he)}-p^0_{\alpha(he)})$, where $\alpha(he)$ is the
     face owning the half-edge (column 5). Summing over half-edges therefore reproduces the
-    per-edge :math:`T_e^{\rm eff}=\sum_{\alpha\ni e}2(P_\alpha-p^0_\alpha)`
+    per-edge $T_e^{\rm eff}=\sum_{\alpha\ni e}2(P_\alpha-p^0_\alpha)$
     automatically, since an edge's two half-edges belong to its two adjacent faces. The isotropic
-    coefficient is :math:`2\sum_\alpha(A_\alpha-1)A_\alpha`.
+    coefficient is $2\sum_\alpha(A_\alpha-1)A_\alpha$.
 
     ``face_params`` may be a scalar (the homogeneous case) or one value per face.
     """
@@ -556,23 +560,23 @@ def stress_profile_xy(
     n_bins: int = 12,
     n_quad: int = 16,
 ) -> tuple[Array, Array]:
-    r"""Profile of :math:`\sigma_{xy}` across the modulation axis, for V1.
+    r"""Profile of $\sigma_{xy}$ across the modulation axis, for V1.
 
-    Force balance requires :math:`\partial_y\sigma_{xy}=-f_x(y)`, hence
-    :math:`\sigma_{xy}(y)=-(a\rho_v/q)\sin(qy)` — parameter-free, so it validates the drive, the
-    stress and the calibration constant :math:`\rho_v` at once.
+    Force balance requires $\partial_y\sigma_{xy}=-f_x(y)$, hence
+    $\sigma_{xy}(y)=-(a\rho_v/q)\sin(qy)$ — parameter-free, so it validates the drive, the
+    stress and the calibration constant $\rho_v$ at once.
 
     Binning is a **sub-segment quadrature of the Irving–Kirkwood line integral**: each half-edge is
-    split into ``n_quad`` equal pieces and each piece's midpoint deposits :math:`1/n_{\rm quad}` of
-    that half-edge's :math:`T d_x d_y/\ell` into the bin containing it (wrapped modulo the box). This
+    split into ``n_quad`` equal pieces and each piece's midpoint deposits $1/n_{\rm quad}$ of
+    that half-edge's $T d_x d_y/\ell$ into the bin containing it (wrapped modulo the box). This
     is what makes the discrete profile satisfy the continuum balance: depositing the whole
     contribution at the edge *midpoint* instead smears the profile at
-    :math:`O(\ell^2/\Delta y^2)`, which at these bin widths is not negligible. Convergence in
+    $O(\ell^2/\Delta y^2)$, which at these bin widths is not negligible. Convergence in
     ``n_quad`` is cheap to check and should be reported.
 
     Returns:
         ``(bin_centres, sigma_xy)``, each of length ``n_bins``; ``sigma_xy`` is normalised by the
-        bin volume :math:`W\,\Delta y`.
+        bin volume $W\,\Delta y$.
     """
     src = edges[:, 3].astype(jnp.int32)
     d = half_edge_vectors(vertices, edges, width, height)
@@ -608,10 +612,10 @@ def hessian_spectrum(
     he_params: Array | None,
     face_params: Array | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    r"""Eigendecomposition of the inner Hessian :math:`\partial^2\mathcal E/\partial\mathbf X^2`.
+    r"""Eigendecomposition of the inner Hessian $\partial^2\mathcal E/\partial\mathbf X^2$.
 
     Dense, symmetrised, ``float64``, and deliberately general: a box/energy-specialised
-    :math:`\lambda_{\max}` primitive already exists elsewhere for the square-box ``E1`` case, so
+    $\lambda_{\max}$ primitive already exists elsewhere for the square-box ``E1`` case, so
     this one is written to be reused rather than triplicating the method. At 72 cells the matrix
     is about ``288 x 288``, so a dense ``eigvalsh`` is cheaper than a power iteration and returns
     the whole spectrum, which V2 needs anyway.
@@ -641,13 +645,13 @@ def hessian_lambda_max(
     he_params: Array | None = None,
     face_params: Array | None = None,
 ) -> float:
-    r"""Largest Hessian eigenvalue — the SGD stability precondition is :math:`\eta\lambda_{\max}<2`.
+    r"""Largest Hessian eigenvalue — the SGD stability precondition is $\eta\lambda_{\max}<2$.
 
-    **Check it, never assume it.** Unrolled AD carries :math:`|1-\eta\lambda|^k` over ``k`` inner
-    steps; at :math:`\eta\lambda=2.13` and 1000 steps that is :math:`10^{51}` per epoch, and the
+    **Check it, never assume it.** Unrolled AD carries $|1-\eta\lambda|^k$ over ``k`` inner
+    steps; at $\eta\lambda=2.13$ and 1000 steps that is $10^{51}$ per epoch, and the
     failure is silent in the direction that matters — the iterate and the recorded metrics stay
     finite and plausible while the sensitivity diverges. The rheology plan refuses to launch above
-    :math:`\eta\lambda_{\max}=1`.
+    $\eta\lambda_{\max}=1$.
     """
     w, _ = hessian_spectrum(energy, vertices, edges, faces, vert_params, he_params, face_params)
     return float(w[-1])
@@ -664,17 +668,17 @@ def top_mode_participation(
 ) -> dict[str, float]:
     r"""How localised is the stiffest Hessian mode?
 
-    Returns the **participation ratio** :math:`1/\sum_i w_i^2` of the per-vertex weights
-    :math:`w_i=v_{2i}^2+v_{2i+1}^2` of the top eigenvector, i.e. an effective number of
-    participating vertices, together with :math:`\lambda_{\max}` and the largest single-vertex
+    Returns the **participation ratio** $1/\sum_i w_i^2$ of the per-vertex weights
+    $w_i=v_{2i}^2+v_{2i+1}^2$ of the top eigenvector, i.e. an effective number of
+    participating vertices, together with $\lambda_{\max}$ and the largest single-vertex
     weight.
 
-    This discriminates the two reasons :math:`\lambda_{\max}` can be large, which call for opposite
+    This discriminates the two reasons $\lambda_{\max}$ can be large, which call for opposite
     responses. A participation ratio of order the system size means the mesh is *uniformly* stiff and
-    the fix is the step size :math:`\eta`. A ratio of order one means a single junction is nearly
-    collapsed and dominates the spectrum — reducing :math:`\eta` then merely hides it, and the
+    the fix is the step size $\eta$. A ratio of order one means a single junction is nearly
+    collapsed and dominates the spectrum — reducing $\eta$ then merely hides it, and the
     honest response is to report the configuration. Note the ``E1`` NaN investigation established
-    that :math:`\lambda_{\max}` does **not** track the minimum edge length on its meshes, so the
+    that $\lambda_{\max}$ does **not** track the minimum edge length on its meshes, so the
     two diagnostics are not interchangeable and both are reported.
     """
     w, v = hessian_spectrum(energy, vertices, edges, faces, vert_params, he_params, face_params)
@@ -702,7 +706,7 @@ def hessian_compliance(
     *,
     rel_cut: float = 1e-8,
 ) -> dict[str, float]:
-    r"""Exact linear-response compliance :math:`J=(\hat{\mathbf c}^\top\mathbf H^{-1}\hat{\mathbf c})/(\hat{\mathbf c}^\top\hat{\mathbf c})`, for V2.
+    r"""Exact linear-response compliance $J=(\hat{\mathbf c}^\top\mathbf H^{-1}\hat{\mathbf c})/(\hat{\mathbf c}^\top\hat{\mathbf c})$, for V2.
 
     ``H`` is singular: the two uniform translations are exact zero modes under PBC. The drive vector
     is mean-removed along the polarisation axis and identically zero on the other, so it is
@@ -713,7 +717,7 @@ def hessian_compliance(
     nonlinear relaxation is not measuring the same object.
 
     Returns a dict with ``J_exact``, ``lambda_max``, ``lambda_min_kept``, ``n_dropped``,
-    ``dropped_overlap`` (fraction of :math:`\|\hat c\|^2` in the discarded subspace — should be
+    ``dropped_overlap`` (fraction of $\|\hat c\|^2$ in the discarded subspace — should be
     ~1e-16), and ``cond_kept``.
     """
     w, v = hessian_spectrum(energy, vertices, edges, faces, vert_params, he_params, face_params)
@@ -744,7 +748,7 @@ def grad_x_norm(
     he_params: Array | None = None,
     face_params: Array | None = None,
 ) -> float:
-    r""":math:`\|\nabla_{\mathbf X}\mathcal E\|_2` — report it for **every** solve before
+    r"""$\|\nabla_{\mathbf X}\mathcal E\|_2$ — report it for **every** solve before
     interpreting any compliance. A modulus attached to an unconverged equilibrium is not a modulus.
     """
     g = jax.grad(lambda x: energy(x, edges, faces, vert_params, he_params, face_params))(vertices)
@@ -786,9 +790,9 @@ def t1_event_count(sig_before: tuple, sig_after: tuple) -> int:
 def connectivity_hash(edges: Array) -> str:
     """Stable hash of the full half-edge table, for the EP validity check.
 
-    EP's paired cancellation requires the :math:`+\\beta` and :math:`-\\beta` solves to cross the
+    EP's paired cancellation requires the $+\\beta$ and $-\\beta$ solves to cross the
     **same** events. A hash mismatch invalidates that outer step, and it is recorded as invalid —
-    **not repaired**. Unlike :func:`topology_signature` this is sensitive to relabelling, which is
+    **not repaired**. Unlike `topology_signature` this is sensitive to relabelling, which is
     what makes it the right tool for comparing two solves from a common starting state and the wrong
     tool for counting events.
     """
@@ -798,10 +802,10 @@ def connectivity_hash(edges: Array) -> str:
 
 
 def drive_drift(vertices: Array, mode: ShearMode) -> float:
-    r"""Drift diagnostic :math:`\max_i|\cos(qr_i)-\overline{\cos(qr)}-\hat c_i|`.
+    r"""Drift diagnostic $\max_i|\cos(qr_i)-\overline{\cos(qr)}-\hat c_i|$.
 
     The weights are attached to material points, so after substantial rearrangement they no longer
-    coincide with the Eulerian field. Re-reference the mode from the :math:`a=0` relaxed state at
+    coincide with the Eulerian field. Re-reference the mode from the $a=0$ relaxed state at
     each outer epoch, and treat the reference as a constant of the estimator *within* the epoch.
     """
     raw = jnp.cos(mode.q * vertices[:, mode.mod_axis])
