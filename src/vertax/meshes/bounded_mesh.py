@@ -473,7 +473,8 @@ class BoundedMesh(Mesh):
     ) -> None:
         """Save a mesh in separate text files that can be read by numpy.
 
-        Only save the vertices, angles, edges and faces, not other parameters.
+        Save the vertices, angles, edges and faces tables, the vertex, edge and face parameter tables and the
+        constants (width and height), one text file each.
 
         Args:
             directory (str): Path to the directory where to save the files.
@@ -517,7 +518,8 @@ class BoundedMesh(Mesh):
     ) -> Self:
         """Load a mesh from text files.
 
-        Only load the vertices, angles, edges and faces, not other parameters.
+        Load the vertices, angles, edges and faces tables, the vertex, edge and face parameter tables and the
+        constants (width and height), one text file each.
 
         Args:
             directory (str): Directory where the text files are stored.
