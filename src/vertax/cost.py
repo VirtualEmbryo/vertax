@@ -56,6 +56,7 @@ from jax.numpy.fft import ifft2
 from numpy.typing import NDArray
 from scipy.optimize import linear_sum_assignment
 
+from vertax.energy import MAX_EDGES_IN_ANY_FACE
 from vertax.geo import get_area, min_image_sq_dist
 
 TARGET_RATIO = 2.0
@@ -354,28 +355,35 @@ def make_cost_mesh2image(sigma_psf: float):
     return cost
 
 
-@jit
+@partial(jit, static_argnums=(3, 4))
 def cost_areas(
     vertTable: Array,
     heTable: Array,
     faceTable: Array,
     width: float,
     height: float,
-    _selected_verts: Array,
-    _selected_hes: Array,
-    selected_faces: Array,
     vertTable_target: Array,
     heTable_target: Array,
     faceTable_target: Array,
-    _image_target: Array,
+    _selected_verts: Array | None = None,
+    _selected_hes: Array | None = None,
+    selected_faces: Array | None = None,
+    _image_target: Array | None = None,
 ) -> Array:
-    """Cost areas : compare the areas of the given mesh versus the areas of the target mesh (`PbcMesh`)."""
+    """Cost areas : compare the areas of the given mesh versus the areas of the target mesh (`PbcMesh`).
+
+    Mean over the selected faces (all faces if `selected_faces` is None) of the squared difference
+    between the area of a face and the area of the same face in the target mesh, which must have
+    the same faces.
+    """
+    if selected_faces is None:
+        selected_faces = jnp.arange(faceTable.shape[0])
 
     def mapped_fn(f: Array) -> Array:
         return (
-            get_area(f, vertTable, heTable, faceTable, width, height)
-            - get_area(f, vertTable_target, heTable_target, faceTable_target, width, height)
-        ) ** 2  # + \
+            get_area(f, vertTable, heTable, faceTable, width, height, MAX_EDGES_IN_ANY_FACE)
+            - get_area(f, vertTable_target, heTable_target, faceTable_target, width, height, MAX_EDGES_IN_ANY_FACE)
+        ) ** 2
 
     difference = vmap(mapped_fn)(selected_faces)
     return (1.0 / len(difference)) * jnp.sum(difference)
