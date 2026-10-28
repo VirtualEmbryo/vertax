@@ -3,6 +3,54 @@
 What each release changes for a user, and what you may have to change in your own code. The
 [changelog](changelog.md) has the full list.
 
+## 0.3.0 (2026-10-28)
+
+Four fixes and docstring corrections. It is a minor release rather than a patch: the first fix
+changes bounded bilevel results and the return value of four functions.
+
+**A bounded outer step keeps the angles with the other tables.** With AD, EP and Sen-ID,
+`BoundedBilevelOptimizer` replaces the vertices, edges and faces of the mesh by the equilibrium of
+the estimator, but used to keep the old arc angles, so the relaxation that followed started from a
+mixed state. The angles now go with the other tables. `outer_opt_bounded`, `outer_eq_prop_bounded`,
+`outer_implicit_bounded` and `outer_adjoint_state_bounded` return seven arrays instead of six:
+
+```text
+vertices, angles, edges, faces, vertices_params, edges_params, faces_params
+```
+
+If your code unpacks their result, add the angles. Bounded results change with AD, EP and Sen-ID
+whenever a relaxation follows an outer step on the same mesh (`bilevel_optimization`,
+`do_n_bilevel_optimization`, `bilevel_opt_bounded`); the parameter update of an outer step does not
+change. Periodic meshes are not affected. See
+[Inverse problems](user-guide/inverse-problems.md#bounded-meshes).
+
+**`BoundedBilevelOptimizer` honours `params_regularizer` and `ep_variant`, and refuses
+`persist_outer_state`.** A bounded run used to ignore the regularizer and to use the centered EP
+estimate whatever `ep_variant` said. Both are now passed to the four bounded estimators, as in the
+periodic optimizer. `persist_outer_state = True` raises a `ValueError` at the first outer step: only
+`PbcBilevelOptimizer` keeps the outer solver state between epochs. With the defaults, results are
+unchanged, bit for bit.
+
+**`cost_areas` can be used as an outer cost.** It used to raise a `TypeError` at its first call. Its
+arguments are now in the twelve-argument order of the outer costs, targets before selections, and
+`selected_faces=None` means every face. See [Costs](user-guide/costs.md#cell-areas).
+
+**`minimize` with a line-search solver and a target other than the vertices.** A line-search solver
+re-evaluated the energy along the wrong array for every `optimization_target` other than
+`OptimizationTarget.VERTICES`, and the call usually raised a `TypeError`. Results are unchanged for
+`OptimizationTarget.VERTICES`, the only target the optimizers use.
+
+**Docstrings corrected**, without a change of behaviour: the shape of `BoundedMesh.faces`, the
+signature of the function returned by `make_energy_line_tensions`, reverse mode for
+`AUTOMATIC_DIFFERENTIATION`, the diagnostics of `trace_mask_closed`, the origin of the file read by
+`clamped.load_mesh`, and what `save_mesh_txt` and `load_mesh_txt` write and read. The docstring of
+`minimize` now says to build the solver once and reuse it (see
+[Relaxation and solvers](user-guide/relaxation.md)).
+
+**Tests.** Four tests compared floating-point results bit for bit with references made on another
+machine; they now compare within a tolerance derived from the computation. Set
+`VERTAX_EXACT_REFERENCES=1` to compare bit for bit on the machine that made the references.
+
 ## 0.2.1 (2026-10-22)
 
 A bug-fix release, with two fixes.

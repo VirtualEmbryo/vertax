@@ -83,11 +83,6 @@ Line-search solvers cannot be differentiated through. The optimizer refuses to c
 line-search inner solver: it prints a warning and keeps its previous setting, whether you change the
 method or the solver.
 
-!!! note "TODO (H. Turlier)"
-    The docstring of `BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION` says "forward-mode JVP
-    via `jax.jacfwd`". On main, `vertax.opt.outer_opt` calls `jax.grad` (reverse mode) on the
-    unrolled relaxation, as the README says. The docstring should be corrected.
-
 ### Implicit differentiation (Sen-ID)
 
 `IMPLICIT_DIFFERENTIATION` relaxes the mesh, then uses the optimality condition
@@ -128,8 +123,9 @@ If an EP run never sets `beta`, the optimizer prints a warning on the first oute
 `BETA_DEFAULT = 0.01`. Set it, and record it with your results.
 
 With `persist_outer_state = True`, a `PbcBilevelOptimizer` using EP keeps the state of the outer
-solver from one epoch to the next. With any other method, setting it raises a `ValueError` on the
-first outer step; a non-default `ep_variant` with another method prints a warning.
+solver from one epoch to the next. With any other method, or with a `BoundedBilevelOptimizer`,
+setting it raises a `ValueError` on the first outer step; a non-default `ep_variant` with another
+method prints a warning.
 
 ### Choosing
 
@@ -164,30 +160,33 @@ recovered and reference parameters after subtracting the mean of each.
 `params_regularizer`, a function `(vert_params, he_params, face_params) -> scalar`, adds a penalty on
 the parameters: its gradient is added to the estimated gradient before the outer step. Its docstring
 recommends `params_normalization` rather than a penalty to fix the mean, because a penalty is scaled
-differently from a gradient that a truncated relaxation has filtered.
-
-!!! note "TODO (H. Turlier)"
-    On main, `PbcBilevelOptimizer` passes `params_regularizer` and `ep_variant` to every estimator,
-    but `BoundedBilevelOptimizer` passes neither: on a bounded mesh, `params_regularizer` is ignored
-    and EP is always centered. The docstring of `params_regularizer` ("Honoured by ALL estimator
-    paths") and the 0.2.0 changelog say otherwise.
+differently from a gradient that a truncated relaxation has filtered. Both optimizers pass it to
+every estimator.
 
 ## Bounded meshes
 
 A `BoundedBilevelOptimizer` has the same attributes and the same estimators, plus `angles_target`.
+It honours `params_regularizer` and `ep_variant` as the periodic optimizer does, and refuses
+`persist_outer_state` (above).
 The bounded inverse problems of the repository are design problems: the cost measures a shape
 ([`cost_ratio`][vertax.cost.cost_ratio]) or a pattern of fates
 ([`cost_checkerboard`][vertax.cost.cost_checkerboard]) rather than a distance to a target mesh. Do not
 set `vertices_target` with T1 transitions on: the vertex relabelling that follows T1 transitions is
 not implemented for bounded meshes and raises an error (see [T1 transitions](t1-transitions.md)).
 
-After an outer step, `BoundedBilevelOptimizer` replaces `mesh.vertices`, `mesh.edges` and
-`mesh.faces` by the equilibrium computed by the estimator (the free equilibrium, for EP) and then
-relaxes the mesh as usual.
+After an outer step, `BoundedBilevelOptimizer` replaces `mesh.vertices`, `mesh.angles`,
+`mesh.edges` and `mesh.faces` by the equilibrium computed by the estimator (the free equilibrium, for
+EP; the adjoint state leaves them as they were) and then relaxes the mesh as usual. The functions
+behind the four estimators, [`outer_opt_bounded`][vertax.opt_bounded.outer_opt_bounded],
+[`outer_eq_prop_bounded`][vertax.opt_bounded.outer_eq_prop_bounded],
+[`outer_implicit_bounded`][vertax.opt_bounded.outer_implicit_bounded] and
+[`outer_adjoint_state_bounded`][vertax.opt_bounded.outer_adjoint_state_bounded], return seven
+arrays: the vertices, angles, edges and faces, then the vertex, edge and face parameters.
 
-!!! note "TODO (H. Turlier)"
-    In that replacement, `mesh.angles` is not updated: the vertices come from the estimator's
-    equilibrium and the angles from before the outer step. Check whether this is intended.
+Before version 0.3.0, these functions returned six arrays, without the angles, and the mesh kept
+the angles it had before the outer step. A bounded run in which a relaxation follows an outer step
+(`bilevel_optimization`, `do_n_bilevel_optimization`) gives other results since 0.3.0 with AD, EP
+and Sen-ID; see the [release notes](../release-notes.md).
 
 ## A first run
 

@@ -136,14 +136,10 @@ tables rather than on a mesh:
 iterations performed. `minimize` gives access to options that the optimizers do not expose:
 `reset_solver_on_t1` (below), `count_t1` (see [T1 transitions](t1-transitions.md)), the T1 function,
 and `optimization_target`, which says which array is optimized (`OptimizationTarget.VERTICES` by
-default).
-
-!!! note "TODO (H. Turlier)"
-    For a target other than `OptimizationTarget.VERTICES`, the `value_fn` that `minimize` gives to
-    line-search solvers is built from branches numbered 0, 2, 3, 4, 5 and 6, while the values of
-    `OptimizationTarget` are 0 to 5; for a parameter target, a line-search solver would re-evaluate
-    the energy along the wrong array. The gradient itself uses the right array. This documentation only
-    uses `OptimizationTarget.VERTICES`.
+default). A line-search solver re-evaluates the energy along the array being optimized, whatever
+the target. Before version 0.3.0, it did so along another array for every target other than
+`OptimizationTarget.VERTICES`, and with the usual table shapes the call raised a `TypeError`;
+fixed-step solvers were not affected. The optimizers only use `OptimizationTarget.VERTICES`.
 
 ## The solvers
 

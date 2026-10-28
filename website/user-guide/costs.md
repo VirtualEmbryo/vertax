@@ -130,41 +130,39 @@ See the [image cost example](../examples/image-cost.md).
 - [`cost_checkerboard`][vertax.cost.cost_checkerboard] adds the squared length of every inner edge
   between two cells of the same fate, so that minimizing it separates cells of the same fate.
 
-## `cost_areas`
+## Cell areas
 
-!!! note "TODO (H. Turlier)"
-    `cost_areas` raises `TypeError: get_area() missing 1 required positional argument: 'max_iter'`
-    on main: it calls `get_area` with six arguments. Its arguments are also not in the order of the
-    twelve-argument signature (it takes the selections before the targets). It is left out of this
-    guide until it is fixed.
-
-The cost below compares the cell areas with those of the target, in the twelve-argument form:
+[`cost_areas`][vertax.cost.cost_areas] (periodic) is the mean, over the selected faces, of the
+squared difference between the area of a face and that of the same face in the target mesh, which
+must have the same faces. With no selection (`None`), every face is used. It takes the
+twelve-argument form, so it can be the `loss_function_outer` of a `PbcBilevelOptimizer`.
 
 ```python
-from jax import vmap
+import math
 
-from vertax.geo import get_area
+import jax
 
-MAX_EDGES_IN_ANY_FACE = 20
+from vertax import PbcBilevelOptimizer, PbcMesh
+from vertax.cost import cost_areas
 
+side = math.sqrt(20)
+target = PbcMesh.from_random_seeds(nb_seeds=20, width=side, height=side, random_key=0)
+moved = PbcMesh.copy_mesh(target)
+moved.vertices = target.vertices + 0.05 * jax.random.normal(jax.random.PRNGKey(0), target.vertices.shape)
+print(float(cost_areas(moved.vertices, moved.edges, moved.faces, side, side,
+                       target.vertices, target.edges, target.faces, None, None, None, None)))
 
-def cost_cell_areas(vertTable, heTable, faceTable, width, height,
-                    vertTable_target, heTable_target, faceTable_target,
-                    selected_verts, selected_hes, selected_faces, image_target):
-    faces = jnp.arange(len(faceTable)) if selected_faces is None else selected_faces
-
-    def squared_difference(face):
-        area = get_area(face, vertTable, heTable, faceTable, width, height, MAX_EDGES_IN_ANY_FACE)
-        area_target = get_area(face, vertTable_target, heTable_target, faceTable_target, width, height,
-                               MAX_EDGES_IN_ANY_FACE)
-        return (area - area_target) ** 2
-
-    return jnp.mean(vmap(squared_difference)(faces))
-
-
-print(float(cost_cell_areas(mesh.vertices, mesh.edges, mesh.faces, side, side,
-                            mesh.vertices, mesh.edges, mesh.faces, None, None, None, None)))
+optimizer = PbcBilevelOptimizer()
+optimizer.loss_function_outer = cost_areas
+optimizer.vertices_target = target.vertices
+optimizer.edges_target = target.edges
+optimizer.faces_target = target.faces
+print(optimizer.compute_outer_loss(moved), optimizer.compute_outer_loss(moved, only_on_faces=[0, 3, 7]))
+print(optimizer.compute_outer_loss(target))  # 0 at the target
 ```
+
+Before version 0.3.0, `cost_areas` raised a `TypeError` at its first call, and its arguments were
+not in the twelve-argument order.
 
 ## Writing your own cost
 

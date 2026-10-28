@@ -88,11 +88,5 @@ print("mean interior area after normalization:",
 
 The mask read here is a test fixture of the repository; the path is relative to the root of the clone.
 
-!!! note "TODO (H. Turlier)"
-    Two statements in `vertax.trace` disagree with the code on main: the module docstring says that
-    `trace_mask_closed` "raises if any cell fails to close", and the docstring of `trace_mask_closed`
-    says that the cumulative list is in `mesh.failures_cumulative`. The function does not raise, and
-    the list is in `mesh.diagnostics["failures_cumulative"]`.
-
 A traced mesh is a patch with a boundary, not a periodic mesh, and VertAX has no function that turns
 it into a `PbcMesh` or a `BoundedMesh`. Its mechanics are those of [clamped patches](clamped-patches.md).

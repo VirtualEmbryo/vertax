@@ -129,11 +129,6 @@ What is specific to bounded meshes:
   clockwise raises a `ValueError`; a mesh with a face whose vertex polygon has turned over (a
   crescent, or a fold) gives a `UserWarning`.
 
-!!! note "TODO (H. Turlier)"
-    The docstring of `BoundedMesh` says that `faces` is a one-dimensional array; on main,
-    `from_seeds` builds it with two columns, the half-edge and the fate. The docstring should be
-    corrected.
-
 ## Saving and plotting
 
 See [Plotting and saving](plotting-and-saving.md).

@@ -73,11 +73,6 @@ from_text = PbcMesh.load_mesh_txt("saved/text")
 print(bool(jnp.allclose(from_text.edges_params, mesh.edges_params)))
 ```
 
-!!! note "TODO (H. Turlier)"
-    The docstrings of `save_mesh_txt` and `load_mesh_txt` say that they handle "only the vertices,
-    edges and faces, not other parameters"; on main they also write and read the parameter arrays
-    and the constants.
-
 `BoundedMesh.load_mesh` and `BoundedMesh.load_mesh_txt` check the orientation of the faces, as
 described in [The two mesh types](meshes.md#bounded-meshes).
 

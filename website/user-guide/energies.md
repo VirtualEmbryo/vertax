@@ -130,11 +130,6 @@ mesh.faces_params = jnp.ones(mesh.nb_faces)  # target areas
 print(float(energy(mesh.vertices, mesh.edges, mesh.faces, mesh.vertices_params, mesh.edges_params, mesh.faces_params)))
 ```
 
-!!! note "TODO (H. Turlier)"
-    The docstring of `make_energy_line_tensions` says that it returns "a callable with the inner-loss
-    signature expected by the bilevel optimizers". On main it returns a seven-argument function that
-    has to be wrapped, as above and in the tests.
-
 ## Line-tension energy (bounded)
 
 [`make_energy_line_tensions_bounded`][vertax.energy.make_energy_line_tensions_bounded]`(K_areas, *, sigmoid_tensions=False)`

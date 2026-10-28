@@ -19,10 +19,9 @@ Only the edges between two cells are kept as edges (`EA`, `EB`): an edge along u
 ends clamped, so it exerts no force on a free vertex, which
 [`clamped_edges_are_inert`][vertax.clamped.clamped_edges_are_inert] checks.
 
-!!! note "TODO (H. Turlier)"
-    The docstring of `load_mesh` says the file is "written by the tracing stage", but on main no
-    function writes it: `vertax.trace` returns a `TracedMesh` in memory. The repository has one such
-    file, `tests/fixtures/clamped_patch_demo_003_pos2.npz`.
+No function of VertAX writes this file: it is the output format of the tracing stage of the analysis
+pipeline, outside the library, and `vertax.trace` returns a `TracedMesh` in memory. The repository
+has one such file, `tests/fixtures/clamped_patch_demo_003_pos2.npz`.
 
 ## The energy is yours
 
