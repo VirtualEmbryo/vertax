@@ -273,6 +273,7 @@ def _jit_minimize(  # noqa: C901
         # value_fn re-evaluates L_in as a function of the solver's params only
         # (everything else held fixed at the current step). Line-search solvers
         # (cg_linesearch, sgd_linesearch, lbfgs) need it; adam/sgd ignore the extra arguments.
+        # The branches follow OptimizationTarget: 0 vertices, 1 edges, 2 faces, 3 to 5 their parameters.
         if argnums == 0:
             params_cur = vt
 
@@ -285,7 +286,7 @@ def _jit_minimize(  # noqa: C901
                     hp[selected_hes],
                     fp[selected_faces],
                 )
-        elif argnums == 2:
+        elif argnums == 1:
             params_cur = ht
 
             def value_fn(p: Array) -> Array:
@@ -297,7 +298,7 @@ def _jit_minimize(  # noqa: C901
                     hp[selected_hes],
                     fp[selected_faces],
                 )
-        elif argnums == 3:
+        elif argnums == 2:
             params_cur = ft
 
             def value_fn(p: Array) -> Array:
@@ -309,7 +310,7 @@ def _jit_minimize(  # noqa: C901
                     hp[selected_hes],
                     fp[selected_faces],
                 )
-        elif argnums == 4:
+        elif argnums == 3:
             params_cur = vp
 
             def value_fn(p: Array) -> Array:
@@ -321,20 +322,19 @@ def _jit_minimize(  # noqa: C901
                     hp[selected_hes],
                     fp[selected_faces],
                 )
-        elif argnums == 5:
+        elif argnums == 4:
             params_cur = hp
 
             def value_fn(p: Array) -> Array:
                 return L_in(
                     vt[selected_verts],
                     ht[selected_hes],
-                    ht[selected_faces],
+                    ft[selected_faces],
                     vp[selected_verts],
                     p[selected_hes],
                     fp[selected_faces],
                 )
-                return L_in(vt, ht, ft, selected_verts, selected_hes, selected_faces, vp, p, fp)
-        else:  # argnums == 6
+        else:  # argnums == 5
             params_cur = fp
 
             def value_fn(p: Array) -> Array:
@@ -553,6 +553,15 @@ def minimize(
     whose curvature pairs otherwise outlive the topology they were measured on. A solver whose state
     holds integers needs a fixed integer dtype under ``jax_enable_x64`` (``cg_linesearch`` and
     ``gd_linesearch`` do; ``optax.lbfgs()`` does).
+
+    Build the solver once and pass the same object to every call. The relaxation loop is compiled
+    for each solver object (the solver is a static argument of the compiled loop, compared by
+    identity), so a new solver at every call, e.g. ``minimize(..., optax.sgd(0.01), ...)`` in a loop,
+    recompiles at every call and keeps every compiled copy in the jit cache. The same holds for
+    ``L_in`` and ``update_t1_func``, and for the solvers given to the bilevel optimizers. Measured on
+    a 20-cell periodic mesh, 50 iterations, CPU: 5.7 s for the first call, then 0.15 s per call with
+    the same solver; 4.7 to 5.0 s per call with a new ``optax.sgd`` each time, the cache growing by
+    one entry per call.
 
     Args:
         cap_vertex_step: Clip each per-step vertex displacement to

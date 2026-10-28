@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vertax"
-version = "0.2.1"
+version = "0.3.0"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE", "AUTHORS"]
 description = "Optimization of vertex models."

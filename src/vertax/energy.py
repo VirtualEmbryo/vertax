@@ -154,8 +154,8 @@ def _hedge_part(
 def make_energy_line_tensions(K_areas: float) -> Callable:
     r"""Factory for the periodic E2 energy with an **explicit** area stiffness.
 
-    Returns a callable with the inner-loss signature expected by the bilevel optimizers,
-    implementing exactly
+    Returns the function ``energy_line_tensions(vertTable, heTable, faceTable, width, height,
+    he_params, face_params)``, implementing exactly
 
     .. math::
         E_2 = \tfrac12\sum_{he}\Lambda_{he}\,\ell_{he}
@@ -167,6 +167,15 @@ def make_energy_line_tensions(K_areas: float) -> Callable:
     ``K_areas`` is a required argument: it must be passed explicitly at every call site so
     that the value used is always visible in the driver/notebook rather than buried in the
     library.
+
+    The returned function takes the box size and not ``vert_params``, so it does not have the
+    6-argument inner-loss signature of the periodic optimizers (see the module docstring). Wrap it
+    to use it as ``PbcBilevelOptimizer.loss_function_inner``:
+
+    ```python
+    E2 = make_energy_line_tensions(K_areas)
+    optimizer.loss_function_inner = lambda v, h, f, _vp, hp, fp: E2(v, h, f, width, height, hp, fp)
+    ```
     """
 
     def energy_line_tensions(

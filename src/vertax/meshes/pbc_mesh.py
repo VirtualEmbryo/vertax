@@ -413,7 +413,8 @@ class PbcMesh(Mesh):
     ) -> None:
         """Save a mesh in separate text files that can be read by numpy.
 
-        Only save the vertices, edges and faces, not other parameters.
+        Save the vertices, edges and faces tables, the vertex, edge and face parameter tables and the
+        constants (width, height and MAX_EDGES_IN_ANY_FACE), one text file each.
 
         Args:
             directory (str): Path to the directory where to save the files.
@@ -454,7 +455,8 @@ class PbcMesh(Mesh):
     ) -> Self:
         """Load a mesh from text files.
 
-        Only load the vertices, edges and faces, not other parameters.
+        Load the vertices, edges and faces tables, the vertex, edge and face parameter tables and the
+        constants (width, height and MAX_EDGES_IN_ANY_FACE), one text file each.
 
         Args:
             directory (str): Directory where the text files are stored.

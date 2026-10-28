@@ -181,6 +181,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                 case BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
                     (
                         mesh.vertices,
+                        mesh.angles,
                         mesh.edges,
                         mesh.faces,
                         mesh.vertices_params,
@@ -211,12 +212,22 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         selected_faces,
                         self.image_target,
                         self._update_T1_func,
+                        self.params_regularizer,
                         cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
 
                 case BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION:
+                    if self.persist_outer_state:
+                        msg = (
+                            "persist_outer_state=True is not implemented by BoundedBilevelOptimizer: its "
+                            "EQUILIBRIUM_PROPAGATION path re-initialises the outer optimizer state at every "
+                            "outer step. Leave persist_outer_state=False for bounded meshes (only "
+                            "PbcBilevelOptimizer threads the outer optimizer state across epochs)."
+                        )
+                        raise ValueError(msg)
                     (
                         mesh.vertices,
+                        mesh.angles,
                         mesh.edges,
                         mesh.faces,
                         mesh.vertices_params,
@@ -248,12 +259,15 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         self.image_target,
                         self.beta,
                         self._update_T1_func,
+                        self.params_regularizer,
+                        self.ep_variant,
                         cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
 
                 case BilevelOptimizationMethod.IMPLICIT_DIFFERENTIATION:
                     (
                         mesh.vertices,
+                        mesh.angles,
                         mesh.edges,
                         mesh.faces,
                         mesh.vertices_params,
@@ -284,11 +298,13 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         selected_faces,
                         self.image_target,
                         self._update_T1_func,
+                        self.params_regularizer,
                         cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
                 case BilevelOptimizationMethod.ADJOINT_STATE:
                     (
                         mesh.vertices,
+                        mesh.angles,
                         mesh.edges,
                         mesh.faces,
                         mesh.vertices_params,
@@ -319,6 +335,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         selected_faces,
                         self.image_target,
                         self._update_T1_func,
+                        self.params_regularizer,
                         cap_vertex_step=self._resolve_cap_vertex_step(),
                     )
                 case _:

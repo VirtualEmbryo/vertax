@@ -1,5 +1,87 @@
 # Changelog
 
+## 0.3.0 — 2026-10-28
+
+Four fixes, docstring corrections and test tolerances for references made on another machine. A minor
+rather than a patch release: the bounded-angles fix changes bounded bilevel results and the return value of
+the four bounded outer functions.
+
+### Fixed: a bounded outer step leaves the arc angles of the estimator's equilibrium on the mesh
+
+- The automatic-differentiation, equilibrium-propagation and implicit-differentiation estimators of
+  `BoundedBilevelOptimizer` replace `mesh.vertices`, `mesh.edges` and `mesh.faces` by the equilibrium of
+  their inner solve (the free one, for EP), but kept the old `mesh.angles`: the mesh was left with the
+  vertices of one state and the arc angles of another, and the relaxation that `bilevel_optimization`
+  and `do_n_bilevel_optimization` run next started from that mixed state. The functional
+  `opt_bounded.bilevel_opt_bounded` did the same. The angles now go with the other tables.
+- API: `outer_opt_bounded`, `outer_eq_prop_bounded`, `outer_implicit_bounded` and
+  `outer_adjoint_state_bounded` return `(vertices, angles, edges, faces, vertex, edge and face
+  parameters)`, seven arrays instead of six. The adjoint-state estimator returns the state it was given,
+  unchanged, as before.
+- New test: `tests/test_bounded_outer_step_angles.py`.
+
+**Bounded bilevel results change** for the AD, EP and ID estimators whenever a relaxation follows an outer
+step on the same mesh (`bilevel_optimization`, `do_n_bilevel_optimization`, `bilevel_opt_bounded`).
+The parameter update of an outer step is unchanged, and so is a run that restores the mesh state after
+`outer_optimization` and relaxes from it. The bounded inverse regression reference
+(`tests/reference_result_test_inverse_modeling_bounded.npz`) is regenerated: final energy 51.766 (was
+51.643), outer cost 0.5616 (was 0.5760). Periodic meshes are not affected.
+
+### Fixed: `BoundedBilevelOptimizer` honours `params_regularizer` and `ep_variant`, and refuses `persist_outer_state`
+
+- The bounded optimizer passed neither `params_regularizer` nor `ep_variant` to its estimators: a bounded
+  run ignored the regularizer, whose docstring says it is honoured by all estimator paths, and its EP
+  estimate was always centered. Both are now passed to the four bounded estimators, as in the periodic
+  ones; `EPVariant.ONE_SIDED` solves the free problem at `beta = 0` and divides by `beta`.
+- `persist_outer_state=True`, which the bounded EP path ignored, now raises `ValueError` at the first
+  outer step: only `PbcBilevelOptimizer` threads the outer optimizer state across epochs.
+- New test: `tests/test_bounded_bilevel_options.py`.
+
+**This fix alone leaves results with the defaults (no regularizer, `CENTERED`, `persist_outer_state=False`)
+unchanged, bit for bit.**
+
+### Fixed: `cost_areas` can be used as an outer cost
+
+- `cost_areas` called `geo.get_area` without its face-walk bound and raised `TypeError` at its first call.
+  Its arguments were also not in the 12-argument order in which the optimizers call an outer cost; they
+  now are (targets before selections), `width` and `height` are static as in `cost_v2v`, and
+  `selected_faces=None` means every face.
+- New test: `tests/test_cost_areas.py`.
+
+### Fixed: `minimize` with a line-search solver and a target other than the vertices
+
+- The `params` and `value_fn` that `minimize` hands to `solver.update` were chosen by branches numbered
+  0, 2, 3, 4, 5, 6 while `OptimizationTarget` is numbered 0 to 5. For every target other than `VERTICES`
+  a line-search solver (`gd_linesearch`, `cg_linesearch`, `optax.lbfgs()`) received another array and
+  re-evaluated the energy along it; with the usual table shapes the call raised `TypeError`. Fixed-step
+  solvers do not use `value_fn` and were not affected.
+- New test: `tests/test_minimize_value_fn_targets.py`.
+
+**Results are unchanged for `OptimizationTarget.VERTICES`**, the only target VertAX itself uses (the branch
+is unchanged).
+
+### Documentation
+
+Docstrings that said something the code does not do, corrected without a change of behaviour:
+`BoundedMesh.faces` is `(nb_faces, 2)`, a half-edge of the face and the cell's fate;
+`make_energy_line_tensions` returns a 7-argument function that has to be wrapped as an inner loss;
+`BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION` is reverse mode (`jax.grad`), not forward mode;
+`trace_mask_closed` does not raise, and its record is in `mesh.diagnostics`; no VertAX function writes
+the file that `clamped.load_mesh` reads; `save_mesh_txt` and `load_mesh_txt` also write and read the
+parameter tables and the constants. `minimize` now says to build the solver once and reuse it: the
+relaxation loop is compiled for each solver object, so a new solver at every call recompiles and keeps
+every compiled copy.
+
+### Tests
+
+Four tests compared floating-point results bit for bit with references made on a Mac and failed on
+Linux x86-64, off in the last bits (`test_default_float_dtype`, `test_trace`, and two in `test_clamped`).
+They now compare within a tolerance derived from the computation (float32 ulps of the array's scale,
+or the rounding bound of a reordered sum), and integer and exact lattice quantities stay exact. Set
+`VERTAX_EXACT_REFERENCES=1` on the machine that produced the references to compare them bit for bit
+(new fixture `exact_references` in `tests/conftest.py`). Three of these tests are renamed, without
+`exactly` or `bit_identical` in their names.
+
 ## 0.2.1 — 2026-10-22
 
 Bug-fix release, with two fixes.

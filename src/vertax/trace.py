@@ -86,7 +86,7 @@ from vertax.trace import regularize, trace_mask_closed, interior_area_ref, norma
 
 clean, report = regularize(mask)               # remove label debris; report says how much moved
 assert report["frac_pixels_moved"] < 1e-3      # else investigate the segmentation
-mesh = trace_mask_closed(clean, rim_tol=2.0)   # raises if any cell fails to close
+mesh = trace_mask_closed(clean, rim_tol=2.0)   # cells that fail to close become unmodelled
 verts = normalized(mesh, interior_area_ref(mesh))   # lengths in units of sqrt(mean interior area)
 ```
 
@@ -480,7 +480,10 @@ def trace_mask_closed(mask: NDArray, stem: str = "", rim_tol: float = 2.0,
     A cell that fails to close is a segmentation topology defect (e.g. a region pinched to a
     point, which is 8-connected but not simply connected as a polygon). It is handled exactly as
     the background is: it becomes missing environment, its vertices are clamped, and no tension is
-    charged on its interfaces. The cumulative list is reported in `mesh.failures_cumulative`.
+    charged on its interfaces. It does not raise. The cumulative list of demoted cells is reported
+    in `mesh.diagnostics["failures_cumulative"]` and their number in
+    `mesh.diagnostics["n_demoted_cells"]`; if cells still fail to close after `max_rounds` rounds,
+    `mesh.diagnostics["unresolved"]` is True and `mesh.failures` lists them.
     """
     um: set[int] = {0}
     hist: dict[int, str] = {}

@@ -88,28 +88,83 @@ def test_geometry_matches_reference_exactly(patch: ClampedPatch, reference: dict
     np.testing.assert_array_equal(L, reference["lens"])
 
 
-def test_gradient_and_k_split_match_reference_exactly(patch: ClampedPatch,
-                                                      reference: dict) -> None:
+def test_gradient_and_k_split_match_reference(patch: ClampedPatch, reference: dict,
+                                              exact_references: bool) -> None:
+    """The gradient, its K split, the residual and `best_K` against the stored reference.
+
+    With ``VERTAX_EXACT_REFERENCES=1``, on the machine that produced the reference, bit for bit.
+    Elsewhere within the rounding of the computation, as measured on Linux against the macOS
+    reference (the gradient, `u`, `v` and `r_eq` are identical there, and `best_K` differs by 1 ulp):
+
+    * the gradient, `u` and `v` within 1e-14 of the gradient's scale, the few ulps (about 45 `eps`)
+      that the sums compiled by XLA for another CPU can change, as in
+      `test_the_k_split_is_exact_not_a_fit`; an elementwise `rtol` would fail on the near-zero
+      components;
+    * `r_eq`, a norm over the `2 N_free` free components, within the error of the gradient plus
+      `2 N_free` `eps` of its value;
+    * `best_K`, recomputed from the stored `u` and `v` so that only its own arithmetic is compared:
+      `K = -(u.v)/(u.u)` over the free components, two `np.dot` products that BLAS sums in a
+      machine-dependent order, within the bound `n eps (sum |u_i v_i| / |u.v| + 1) |K|` of a
+      reordered sum of `n` terms; the residual within the error that this `K` and the rounding of
+      its norm give.
+    """
     xp = jnp.asarray(reference["xp"])
     E = _energy(patch, reference["gamma"])
     g = np.asarray(jax.grad(E, argnums=0)(xp, K_SHOW))
-    np.testing.assert_array_equal(g, reference["grad"])
     u, v = split_gradient(E, patch, xp)
-    np.testing.assert_array_equal(u, reference["u"])
-    np.testing.assert_array_equal(v, reference["v"])
-    assert r_eq(g, patch) == float(reference["r_eq"])
-    np.testing.assert_array_equal(np.array(best_K(u, v, patch)), reference["best_K"])
+    if exact_references:
+        np.testing.assert_array_equal(g, reference["grad"])
+        np.testing.assert_array_equal(u, reference["u"])
+        np.testing.assert_array_equal(v, reference["v"])
+        assert r_eq(g, patch) == float(reference["r_eq"])
+        np.testing.assert_array_equal(np.array(best_K(u, v, patch)), reference["best_K"])
+        return
+
+    eps = np.finfo(np.float64).eps
+    g_atol = 1e-14 * np.abs(reference["grad"]).max()
+    np.testing.assert_allclose(g, reference["grad"], rtol=0, atol=g_atol)
+    np.testing.assert_allclose(u, reference["u"], rtol=0, atol=1e-14 * np.abs(reference["u"]).max())
+    np.testing.assert_allclose(v, reference["v"], rtol=0, atol=1e-14 * np.abs(reference["v"]).max())
+    n_free_components = 2 * patch.n_free
+    r_ref = float(reference["r_eq"])
+    assert abs(r_eq(g, patch) - r_ref) <= g_atol + n_free_components * eps * r_ref
+
+    uf, vf = (np.asarray(reference[k])[patch.free_idx].ravel() for k in ("u", "v"))
+    K_ref, res_ref = (float(x) for x in reference["best_K"])
+    K, res = best_K(reference["u"], reference["v"], patch)
+    K_bound = uf.size * eps * (np.abs(uf * vf).sum() / abs(uf @ vf) + 1.0) * abs(K_ref)
+    assert abs(K - K_ref) <= K_bound
+    res_bound = (K_bound * np.linalg.norm(uf)
+                 + uf.size * eps * (abs(K_ref) * np.linalg.norm(uf) + np.linalg.norm(vf))) / np.sqrt(uf.size)
+    assert abs(res - res_ref) <= res_bound
 
 
 def test_relaxation_matches_reference(patch: ClampedPatch, reference: dict) -> None:
-    """L-BFGS through scipy, so a tolerance rather than exact equality."""
+    """L-BFGS through scipy, so a tolerance rather than exact equality.
+
+    L-BFGS stops when the energy no longer decreases in float64 (`ftol` is below `eps`), so the
+    stopping point is set by the rounding of the energy, and another machine stops elsewhere on the
+    same flat bottom. MEASURED, Linux against the macOS reference: positions within 4.9e-6, energy
+    within 1e-12 relative, `min_area` within 6e-7 relative, and the smoothed residual 7.1e-6 against
+    2.9e-5.
+
+    * The energy is second order in the position error, so it keeps its tolerance, 1e-8 relative.
+    * `min_area` is first order in it: 1e-5 relative, 15 times the measured difference.
+    * The smoothed residual at the stop is the floor that the energy's rounding allows, about
+      `sqrt(2 lambda eps E)` for a curvature `lambda`, large (about 1/eps_smooth) at the four collapsed
+      edges, so its value is not reproducible and is not compared with the reference. It is checked to
+      be below 1e-4 of the residual at the observed configuration, its scale, three times above the
+      larger of the two measured values: a relaxation that has not converged stays far above that.
+    """
     E0 = _energy(patch, reference["gamma"])
     Es = _energy(patch, reference["gamma"], eps=1e-6)
     out = relax(Es, patch, K_SHOW, E_exact=E0)
     assert out["success"]
     assert out["E"] == pytest.approx(float(reference["relax_E"]), rel=1e-8)
-    assert out["r_eq_smoothed"] == pytest.approx(float(reference["relax_r_eq_smoothed"]), rel=1e-4)
-    assert out["min_area"] == pytest.approx(float(reference["relax_min_area"]), rel=1e-6)
+    assert out["r_eq_smoothed"] < 1e-4 * out["r_eq_obs"], (
+        f"smoothed residual {out['r_eq_smoothed']:.3e} against {out['r_eq_obs']:.3e} at the observed "
+        f"configuration (reference {float(reference['relax_r_eq_smoothed']):.3e})")
+    assert out["min_area"] == pytest.approx(float(reference["relax_min_area"]), rel=1e-5)
 
 
 # ---------------------------------------------------------------------------------------

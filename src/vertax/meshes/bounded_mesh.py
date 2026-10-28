@@ -90,7 +90,10 @@ class BoundedMesh(Mesh):
     - id of target vertex + 2 if current half-edge is an outside edge, else 1,
     - id of the face containing the half-edge.
 
-    `faces` is a 1D array of integers of size (nb_faces) containing the id of a half-edge belonging to this face.
+    `faces` is a 2D array of integers of size (nb_faces, 2), with:
+
+    - id of a half-edge belonging to the face,
+    - fate marker of the cell, between 0 and `nb_fates - 1` (see `from_seeds`).
 
     `angles` is a 1D array of floats of size (nb_angles), with the angles sustaining the arcs of the free interfaces ;
     between 0 and PI / 2.
@@ -470,7 +473,8 @@ class BoundedMesh(Mesh):
     ) -> None:
         """Save a mesh in separate text files that can be read by numpy.
 
-        Only save the vertices, angles, edges and faces, not other parameters.
+        Save the vertices, angles, edges and faces tables, the vertex, edge and face parameter tables and the
+        constants (width and height), one text file each.
 
         Args:
             directory (str): Path to the directory where to save the files.
@@ -514,7 +518,8 @@ class BoundedMesh(Mesh):
     ) -> Self:
         """Load a mesh from text files.
 
-        Only load the vertices, angles, edges and faces, not other parameters.
+        Load the vertices, angles, edges and faces tables, the vertex, edge and face parameter tables and the
+        constants (width and height), one text file each.
 
         Args:
             directory (str): Directory where the text files are stored.

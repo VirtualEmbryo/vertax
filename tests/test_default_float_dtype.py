@@ -6,7 +6,10 @@ constructors. With ``jax_enable_x64`` the default is ``float64`` and the vertice
 everything the relaxation returns must stay ``float64``.
 
 The x64 flag is read once per process, so the x64 cases run in a subprocess started with
-``JAX_ENABLE_X64=1``. The reference arrays were produced by the unmodified 0.2.0 code.
+``JAX_ENABLE_X64=1``. The reference arrays were produced by the unmodified 0.2.0 code, on a Mac. On
+another machine the relaxed arrays agree with them to a few float32 ulps, not to the bit (see
+`test_default_precision_reproduces_version_0_2_0`); bit-identity is checked on the machine that
+produced them, with ``VERTAX_EXACT_REFERENCES=1``.
 """
 from __future__ import annotations
 
@@ -32,6 +35,8 @@ N_CELLS_PERIODIC = 20
 N_CELLS_BOUNDED = 20
 N_EDGES_BOUNDED = (N_CELLS_BOUNDED - 1) * 3
 RELAXATION_ITERATIONS = 30
+FLOAT32_ULPS = 16
+"""Tolerance on the float arrays, in float32 ulps of each array's scale (its largest magnitude)."""
 BOUNDED_ENERGY = make_energy_line_tensions_bounded(40.0, sigmoid_tensions=True)
 
 
@@ -147,15 +152,32 @@ def probe_dtypes() -> dict[str, object]:
     return report
 
 
-def test_default_precision_is_bit_identical_to_version_0_2_0() -> None:
-    """Without x64 the constructors and one relaxation of each mode reproduce 0.2.0 exactly."""
+def test_default_precision_reproduces_version_0_2_0(exact_references: bool) -> None:
+    """Without x64 the constructors and one relaxation of each mode reproduce 0.2.0.
+
+    The index tables are integers and are compared exactly. The float arrays are compared exactly
+    with ``VERTAX_EXACT_REFERENCES=1``, on the machine that produced the references, where the test
+    establishes that the float32 path is bit-identical to 0.2.0. Elsewhere they are compared within
+    `FLOAT32_ULPS` float32 ulps of the array's scale: the 30 gradient steps of each relaxation are
+    compiled by XLA for the host CPU, whose vector width and fused multiply-adds change the rounding
+    of the energy's sums. Measured on Linux x86-64 against the macOS references: the constructor
+    arrays are identical, and the relaxed vertices and angles differ in 36 to 46 of their elements by
+    at most 2.2 ulps of the array's scale (periodic vertices 0.90, bounded vertices 0.98, bounded
+    angles 2.1). A change of the computation itself, such as another energy, step or T1 decision,
+    moves them by orders of magnitude more.
+    """
     assert not jax.config.jax_enable_x64, "this test checks the default (float32) configuration"
     reference = np.load(REFERENCE)
     now = collect_arrays()
     assert set(now) == set(reference.files)
     for name, array in now.items():
-        assert array.dtype == reference[name].dtype, name
-        np.testing.assert_array_equal(array, reference[name], err_msg=name)
+        expected = reference[name]
+        assert array.dtype == expected.dtype, name
+        if exact_references or not np.issubdtype(expected.dtype, np.floating):
+            np.testing.assert_array_equal(array, expected, err_msg=name)
+        else:
+            atol = FLOAT32_ULPS * np.finfo(np.float32).eps * float(np.abs(expected).max())
+            np.testing.assert_allclose(array, expected, rtol=0, atol=atol, err_msg=name)
 
 
 def test_default_precision_is_float32() -> None:

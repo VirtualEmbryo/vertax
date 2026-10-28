@@ -145,7 +145,10 @@ class ClampedPatch:
 
 
 def load_mesh(path: str | Path) -> ClampedPatch:
-    """Load a traced patch from the `.npz` written by the tracing stage.
+    """Load a traced patch from an `.npz` file with the keys listed below.
+
+    No function of VertAX writes this file: it is the output format of the tracing stage of the
+    analysis pipeline, outside the library. `tests/fixtures/clamped_patch_demo_003_pos2.npz` is one.
 
     Coordinates are divided by `sqrt(a_ref_px)` on load, so that a typical interior cell has unit
     area and every length in this module is dimensionless. That is what makes tensions comparable

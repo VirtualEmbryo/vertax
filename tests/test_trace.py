@@ -109,14 +109,45 @@ def test_topology_matches_reference(stem: str, traced: dict, reference: dict) ->
 
 
 @pytest.mark.parametrize("stem", STEMS)
-def test_geometry_matches_reference_exactly(stem: str, traced: dict, reference: dict) -> None:
-    """Zero tolerance: the tracer is deterministic integer-lattice arithmetic plus averaging."""
+def test_geometry_matches_reference(stem: str, traced: dict, reference: dict, exact_references: bool) -> None:
+    """Vertices exactly; areas, perimeters and lengths to the rounding of their sums.
+
+    The vertices are centroids of clusters of integer lattice corners, exact on any machine. The other
+    quantities are sums of floating-point terms whose order depends on the machine: the shoelace area
+    is the difference of two `np.dot` products, which BLAS (Accelerate on macOS, OpenBLAS on Linux)
+    sums in its own order. Each is compared within the a-priori bound of a reordered sum of `n` terms,
+    `n * eps * S`, where `S` is the sum of the magnitudes of the terms; for an area `S` is half the sum
+    of `|x_i y_{i+1}|` and `|y_i x_{i+1}|`, about 150 times the area for these pixel coordinates.
+    MEASURED, Linux against the macOS reference: one face area of `demo_018_pos0` differs, by
+    2.3e-10, 0.31 `eps * S` and 0.028 of its bound; everything else is identical. With
+    ``VERTAX_EXACT_REFERENCES=1`` (on the machine that produced the reference) every comparison is exact.
+    """
     _, _, m = traced[stem]
     np.testing.assert_array_equal(m.verts, reference[f"{stem}/verts"])
-    np.testing.assert_array_equal(m.face_areas(), reference[f"{stem}/face_areas"])
-    np.testing.assert_array_equal(m.face_perimeters(), reference[f"{stem}/face_perimeters"])
-    np.testing.assert_array_equal(m.edge_lengths(), reference[f"{stem}/edge_lengths"])
-    assert interior_area_ref(m) == float(reference[f"{stem}/interior_area_ref"])
+    areas, perimeters, lengths = m.face_areas(), m.face_perimeters(), m.edge_lengths()
+    if exact_references:
+        np.testing.assert_array_equal(areas, reference[f"{stem}/face_areas"])
+        np.testing.assert_array_equal(perimeters, reference[f"{stem}/face_perimeters"])
+        np.testing.assert_array_equal(lengths, reference[f"{stem}/edge_lengths"])
+        assert interior_area_ref(m) == float(reference[f"{stem}/interior_area_ref"])
+        return
+
+    eps = np.finfo(np.float64).eps
+    n = np.array([len(f) for f in m.faces])
+    shoelace_scale = np.array([
+        0.5 * (np.abs(m.verts[f, 0] * np.roll(m.verts[f, 1], -1)).sum()
+               + np.abs(m.verts[f, 1] * np.roll(m.verts[f, 0], -1)).sum())
+        for f in m.faces
+    ])
+    area_bound = n * eps * shoelace_scale
+    assert np.all(np.abs(areas - reference[f"{stem}/face_areas"]) <= area_bound)
+    # A perimeter sums n lengths, each a correctly rounded square root of two squares.
+    assert np.all(np.abs(perimeters - reference[f"{stem}/face_perimeters"]) <= (n + 4) * eps * perimeters)
+    np.testing.assert_allclose(lengths, reference[f"{stem}/edge_lengths"], rtol=4 * eps, atol=0)
+    # The reference area is the mean of the interior face areas.
+    interior = m.face_is_interior if m.face_is_interior.any() else np.ones(len(areas), dtype=bool)
+    mean_bound = area_bound[interior].mean() + interior.sum() * eps * np.abs(areas[interior]).mean()
+    assert abs(interior_area_ref(m) - float(reference[f"{stem}/interior_area_ref"])) <= mean_bound
 
 
 @pytest.mark.parametrize("stem", STEMS)
