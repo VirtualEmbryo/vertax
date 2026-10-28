@@ -138,12 +138,9 @@ the same problem.
 Some directions of parameter space are hard to observe. For line tensions, adding the same constant to
 every tension changes the equilibrium very little, so an inverse problem determines the mean tension
 poorly. `params_normalization` fixes the mean of chosen parameter arrays after every outer step, by
-the projection $p \leftarrow p - (\operatorname{mean}(p) - \text{target})$:
-
-```text
-optimizer.params_normalization = {"edges_params": 1.0}   # mean tension 1
-optimizer.params_normalization = {"faces_params": 4.1}   # mean preferred perimeter 4.1
-```
+the projection $p \leftarrow p - (\operatorname{mean}(p) - \text{target})$. For example,
+`{"edges_params": 1.0}` fixes the mean tension at 1, and `{"faces_params": 4.1}` the mean preferred
+perimeter at 4.1; the example at the end of this page sets it.
 
 The keys can be `vertices_params`, `edges_params` and `faces_params`. `mean_tension_gauge = value` is
 the older spelling of `{"edges_params": value}`; setting both raises a `ValueError`. The constraint is
