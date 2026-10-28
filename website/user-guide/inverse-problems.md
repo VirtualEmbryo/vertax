@@ -56,9 +56,11 @@ function)` adds a column computed by `function(mesh, optimizer)`. See the
 [many epochs example](../examples/many-epochs.md).
 
 !!! note "Long runs on Linux"
-    Start long runs with the glibc setting `MALLOC_ARENA_MAX=2`, which limits the number of memory
-    arenas of the allocator. It keeps the memory of the process flat over many epochs and does not
-    change the results.
+    On Linux with glibc, a long JAX run can grow by several GB, although nothing leaks: the
+    allocator keeps memory that XLA has freed in per-thread arenas. Starting the run with
+    `MALLOC_ARENA_MAX=2` limits this. In our 36-cell design runs on a 40-thread machine, memory at
+    epoch 400 went from 3.9 GB to 1.5 GB, with identical results (every table and snapshot compared
+    on a 30-epoch run).
 
     ```bash
     MALLOC_ARENA_MAX=2 python my_run.py
