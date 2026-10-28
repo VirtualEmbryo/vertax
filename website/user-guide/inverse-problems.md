@@ -55,6 +55,15 @@ costs and the time of every reported epoch to `summary.csv`, and plots of the co
 function)` adds a column computed by `function(mesh, optimizer)`. See the
 [many epochs example](../examples/many-epochs.md).
 
+!!! note "Long runs on Linux"
+    Start long runs with the glibc setting `MALLOC_ARENA_MAX=2`, which limits the number of memory
+    arenas of the allocator. It keeps the memory of the process flat over many epochs and does not
+    change the results.
+
+    ```bash
+    MALLOC_ARENA_MAX=2 python my_run.py
+    ```
+
 ## The four gradient estimators
 
 The gradient of the cost with respect to the parameters goes through the equilibrium $X^\ast_\theta$.
