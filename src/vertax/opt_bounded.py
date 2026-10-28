@@ -544,7 +544,7 @@ def cost_ad_bounded(
     image_target: Array | None = None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     cap_vertex_step: bool = False,
-) -> tuple[Array, tuple[Array, Array, Array]]:
+) -> tuple[Array, tuple[Array, Array, Array, Array]]:
     """Automatic differentiation cost function."""
     # heTable_before = heTable
 
@@ -592,7 +592,7 @@ def cost_ad_bounded(
         image_target,
     )
 
-    return loss_out_value, (vertTable, heTable, faceTable)
+    return loss_out_value, (vertTable, angTable, heTable, faceTable)
 
 
 def outer_opt_bounded(
@@ -622,9 +622,13 @@ def outer_opt_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     params_regularizer: Callable | None = None,
     cap_vertex_step: bool = False,
-) -> tuple[Array, Array, Array, Array, Array, Array]:
-    """Outer optimization for a bounded mesh."""
-    ((_, (vertTable, heTable, faceTable)), (grad_verts, grad_hes, grad_faces)) = value_and_grad(
+) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    """Outer optimization for a bounded mesh.
+
+    Returns the tables (vertices, angles, edges, faces) of the inner equilibrium and the updated
+    parameters.
+    """
+    ((_, (vertTable, angTable, heTable, faceTable)), (grad_verts, grad_hes, grad_faces)) = value_and_grad(
         cost_ad_bounded, argnums=(4, 5, 6), has_aux=True
     )(
         vertTable,
@@ -665,7 +669,7 @@ def outer_opt_bounded(
     he_params = updated_params["he_params"]  # type: ignore
     face_params = updated_params["face_params"]  # type: ignore
 
-    return vertTable, heTable, faceTable, vert_params, he_params, face_params
+    return vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params
 
 
 #############################
@@ -907,7 +911,7 @@ def outer_eq_prop_bounded(
     params_regularizer: Callable | None = None,
     ep_variant: EPVariant = EPVariant.CENTERED,
     cap_vertex_step: bool = False,
-) -> tuple[Array, Array, Array, Array, Array, Array]:
+) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
     """Outer optimization for equilibrium propagation.
 
     `ep_variant` selects the estimator, as in the periodic `vertax.opt._compute_ep_grads`: CENTERED
@@ -915,6 +919,8 @@ def outer_eq_prop_bounded(
     `+beta` and divides by `beta`. The returned tables are those of the free solve.
     `params_regularizer(vert_params, he_params, face_params) -> scalar`, if given, has its gradient
     added to the EP gradient before the outer solver's update.
+
+    Returns the tables (vertices, angles, edges, faces) of the free solve and the updated parameters.
     """
     ep_variant = EPVariant(ep_variant)
     if ep_variant is EPVariant.CENTERED:
@@ -1059,7 +1065,7 @@ def outer_eq_prop_bounded(
     he_params = updated_params["he_params"]  # type: ignore
     face_params = updated_params["face_params"]  # type: ignore
 
-    return vertTable_free, heTable_free, faceTable_free, vert_params, he_params, face_params
+    return vertTable_free, angTable_free, heTable_free, faceTable_free, vert_params, he_params, face_params
 
 
 ###########################
@@ -1094,8 +1100,12 @@ def outer_implicit_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     params_regularizer: Callable | None = None,
     cap_vertex_step: bool = False,
-) -> tuple[Array, Array, Array, Array, Array, Array]:
-    """Outer optimization for implicit differentiation method."""
+) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    """Outer optimization for implicit differentiation method.
+
+    Returns the tables (vertices, angles, edges, faces) of the inner equilibrium and the updated
+    parameters.
+    """
 
     def L_in_flatten(  # noqa: N802
         vertangTable_flatten: Array,
@@ -1294,7 +1304,7 @@ def outer_implicit_bounded(
     he_params = updated_params["he_params"]  # type: ignore
     face_params = updated_params["face_params"]  # type: ignore
 
-    return vertTable_eq, heTable_eq, faceTable_eq, vert_params, he_params, face_params
+    return vertTable_eq, angTable_eq, heTable_eq, faceTable_eq, vert_params, he_params, face_params
 
 
 ##########################
@@ -1329,8 +1339,12 @@ def outer_adjoint_state_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     params_regularizer: Callable | None = None,
     cap_vertex_step: bool = False,
-) -> tuple[Array, Array, Array, Array, Array, Array]:
-    """Outer optimization for adjoint state method."""
+) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    """Outer optimization for adjoint state method.
+
+    Returns the tables (vertices, angles, edges, faces) it was given, unchanged, and the updated
+    parameters.
+    """
 
     def L_in_flatten(  # noqa: N802
         vertangTable_flatten: Array,
@@ -1477,7 +1491,7 @@ def outer_adjoint_state_bounded(
     he_params = updated_params["he_params"]  # type: ignore
     face_params = updated_params["face_params"]  # type: ignore
 
-    return vertTable, heTable, faceTable, vert_params, he_params, face_params
+    return vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params
 
 
 #############
@@ -1516,7 +1530,7 @@ def bilevel_opt_bounded(
     """Bilevel optimization for bounded meshes."""
     match optimization_method:
         case BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
-            vertTable, heTable, faceTable, vert_params, he_params, face_params = outer_opt_bounded(
+            vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params = outer_opt_bounded(
                 vertTable,
                 angTable,
                 heTable,
@@ -1542,7 +1556,7 @@ def bilevel_opt_bounded(
                 image_target,
             )
         case BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION:
-            vertTable, heTable, faceTable, vert_params, he_params, face_params = outer_eq_prop_bounded(
+            vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params = outer_eq_prop_bounded(
                 vertTable,
                 angTable,
                 heTable,
@@ -1570,7 +1584,7 @@ def bilevel_opt_bounded(
                 update_T1_func,
             )
         case BilevelOptimizationMethod.IMPLICIT_DIFFERENTIATION:
-            vertTable, heTable, faceTable, vert_params, he_params, face_params = outer_implicit_bounded(
+            vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params = outer_implicit_bounded(
                 vertTable,
                 angTable,
                 heTable,
@@ -1597,7 +1611,7 @@ def bilevel_opt_bounded(
                 update_T1_func,
             )
         case BilevelOptimizationMethod.ADJOINT_STATE:
-            vertTable, heTable, faceTable, vert_params, he_params, face_params = outer_adjoint_state_bounded(
+            vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params = outer_adjoint_state_bounded(
                 vertTable,
                 angTable,
                 heTable,

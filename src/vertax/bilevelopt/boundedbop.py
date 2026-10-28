@@ -181,6 +181,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                 case BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
                     (
                         mesh.vertices,
+                        mesh.angles,
                         mesh.edges,
                         mesh.faces,
                         mesh.vertices_params,
@@ -226,6 +227,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         raise ValueError(msg)
                     (
                         mesh.vertices,
+                        mesh.angles,
                         mesh.edges,
                         mesh.faces,
                         mesh.vertices_params,
@@ -265,6 +267,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                 case BilevelOptimizationMethod.IMPLICIT_DIFFERENTIATION:
                     (
                         mesh.vertices,
+                        mesh.angles,
                         mesh.edges,
                         mesh.faces,
                         mesh.vertices_params,
@@ -301,6 +304,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                 case BilevelOptimizationMethod.ADJOINT_STATE:
                     (
                         mesh.vertices,
+                        mesh.angles,
                         mesh.edges,
                         mesh.faces,
                         mesh.vertices_params,
