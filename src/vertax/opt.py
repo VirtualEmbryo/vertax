@@ -554,6 +554,15 @@ def minimize(
     holds integers needs a fixed integer dtype under ``jax_enable_x64`` (``cg_linesearch`` and
     ``gd_linesearch`` do; ``optax.lbfgs()`` does).
 
+    Build the solver once and pass the same object to every call. The relaxation loop is compiled
+    for each solver object (the solver is a static argument of the compiled loop, compared by
+    identity), so a new solver at every call, e.g. ``minimize(..., optax.sgd(0.01), ...)`` in a loop,
+    recompiles at every call and keeps every compiled copy in the jit cache. The same holds for
+    ``L_in`` and ``update_t1_func``, and for the solvers given to the bilevel optimizers. Measured on
+    a 20-cell periodic mesh, 50 iterations, CPU: 5.7 s for the first call, then 0.15 s per call with
+    the same solver; 4.7 to 5.0 s per call with a new ``optax.sgd`` each time, the cache growing by
+    one entry per call.
+
     Args:
         cap_vertex_step: Clip each per-step vertex displacement to
             MAX_VERTEX_STEP_FACTOR * min_dist_T1. Intended for line-search solvers
