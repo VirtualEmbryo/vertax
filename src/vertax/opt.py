@@ -273,6 +273,7 @@ def _jit_minimize(  # noqa: C901
         # value_fn re-evaluates L_in as a function of the solver's params only
         # (everything else held fixed at the current step). Line-search solvers
         # (cg_linesearch, sgd_linesearch, lbfgs) need it; adam/sgd ignore the extra arguments.
+        # The branches follow OptimizationTarget: 0 vertices, 1 edges, 2 faces, 3 to 5 their parameters.
         if argnums == 0:
             params_cur = vt
 
@@ -285,7 +286,7 @@ def _jit_minimize(  # noqa: C901
                     hp[selected_hes],
                     fp[selected_faces],
                 )
-        elif argnums == 2:
+        elif argnums == 1:
             params_cur = ht
 
             def value_fn(p: Array) -> Array:
@@ -297,7 +298,7 @@ def _jit_minimize(  # noqa: C901
                     hp[selected_hes],
                     fp[selected_faces],
                 )
-        elif argnums == 3:
+        elif argnums == 2:
             params_cur = ft
 
             def value_fn(p: Array) -> Array:
@@ -309,7 +310,7 @@ def _jit_minimize(  # noqa: C901
                     hp[selected_hes],
                     fp[selected_faces],
                 )
-        elif argnums == 4:
+        elif argnums == 3:
             params_cur = vp
 
             def value_fn(p: Array) -> Array:
@@ -321,20 +322,19 @@ def _jit_minimize(  # noqa: C901
                     hp[selected_hes],
                     fp[selected_faces],
                 )
-        elif argnums == 5:
+        elif argnums == 4:
             params_cur = hp
 
             def value_fn(p: Array) -> Array:
                 return L_in(
                     vt[selected_verts],
                     ht[selected_hes],
-                    ht[selected_faces],
+                    ft[selected_faces],
                     vp[selected_verts],
                     p[selected_hes],
                     fp[selected_faces],
                 )
-                return L_in(vt, ht, ft, selected_verts, selected_hes, selected_faces, vp, p, fp)
-        else:  # argnums == 6
+        else:  # argnums == 5
             params_cur = fp
 
             def value_fn(p: Array) -> Array:
