@@ -7,8 +7,9 @@ class BilevelOptimizationMethod(Enum):
     """Which optimization method to use in the bi-level optimization."""
 
     AUTOMATIC_DIFFERENTIATION = "ad"
-    """Unrolls the inner optimization steps ; forward-mode JVP via `jax.jacfwd`,
-    cost scales with the number of parameters and iterations."""
+    """Unrolls the inner optimization steps and differentiates through them in reverse mode
+    (`jax.grad`) ; memory and cost scale with the number of unrolled inner iterations, and
+    line-search inner solvers are not supported."""
     EQUILIBRIUM_PROPAGATION = "ep"
     """Estimates the gradient from perturbed free vs nudged equilibria ; no backdrop required.
     Most efficient but depends on the perturbation size β."""
