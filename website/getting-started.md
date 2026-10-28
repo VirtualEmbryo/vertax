@@ -6,8 +6,8 @@ VertAX is not on PyPI yet, so `pip install vertax` does not work. Install it fro
 virtual environment:
 
 ```sh
-git clone https://github.com/VirtualEmbryo/VertAX.git
-cd VertAX
+git clone https://github.com/VirtualEmbryo/vertax.git
+cd vertax
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .

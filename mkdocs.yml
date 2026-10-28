@@ -5,7 +5,8 @@
 #     uv run mkdocs serve               # http://localhost:8000
 site_name: VertAX
 site_description: A differentiable JAX-based framework for vertex modeling and inverse design of epithelial tissues
-repo_url: https://github.com/VirtualEmbryo/VertAX
+site_url: https://virtualembryo.github.io/vertax/
+repo_url: https://github.com/VirtualEmbryo/vertax
 copyright: Copyright 2025-2026 the VertAX authors. GPL-3.0-or-later.
 docs_dir: website
 site_dir: site

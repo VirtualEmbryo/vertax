@@ -182,7 +182,7 @@ dev = [
     "scalene>=1.5.55",
 ]
 docs = [
-    "mkdocs>=1.6.1",
+    "mkdocs>=1.6,<2",
     "mkdocs-material>=9.8.0",
     "mkdocstrings[python]>=1.0.8",
 ]

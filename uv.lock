@@ -3491,7 +3491,7 @@ dev = [
     { name = "scalene", specifier = ">=1.5.55" },
 ]
 docs = [
-    { name = "mkdocs", specifier = ">=1.6.1" },
+    { name = "mkdocs", specifier = ">=1.6,<2" },
     { name = "mkdocs-material", specifier = ">=9.8.0" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.8" },
 ]
