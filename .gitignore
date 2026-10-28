@@ -105,3 +105,6 @@ manuscript-figures-notebook/figure4/Vertax_A549_EpithelialCell_Code/
 
 # Written into the working directory by do_n_bilevel_optimization (save_folder defaults to ".").
 hyper-parameters.txt
+
+# Documentation website, built by `mkdocs build` from mkdocs.yml and website/
+site/
