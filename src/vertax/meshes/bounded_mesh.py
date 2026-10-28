@@ -90,7 +90,10 @@ class BoundedMesh(Mesh):
     - id of target vertex + 2 if current half-edge is an outside edge, else 1,
     - id of the face containing the half-edge.
 
-    `faces` is a 1D array of integers of size (nb_faces) containing the id of a half-edge belonging to this face.
+    `faces` is a 2D array of integers of size (nb_faces, 2), with:
+
+    - id of a half-edge belonging to the face,
+    - fate marker of the cell, between 0 and `nb_fates - 1` (see `from_seeds`).
 
     `angles` is a 1D array of floats of size (nb_angles), with the angles sustaining the arcs of the free interfaces ;
     between 0 and PI / 2.
