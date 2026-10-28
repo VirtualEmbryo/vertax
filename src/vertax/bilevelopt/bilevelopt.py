@@ -149,8 +149,9 @@ class _BilevelOptimizer:
         self.persist_outer_state: bool = False
         """If True, the outer optimizer's moment/accumulator state is carried across bilevel
         epochs instead of being re-initialised at every call.  Only honoured by the
-        EQUILIBRIUM_PROPAGATION method in ``PbcBilevelOptimizer``; all other methods behave
-        identically regardless of this flag.  Defaults to False (current behaviour)."""
+        EQUILIBRIUM_PROPAGATION method in ``PbcBilevelOptimizer``; setting it with any other
+        method, or with a ``BoundedBilevelOptimizer``, raises ``ValueError`` at the first outer
+        step.  Defaults to False (current behaviour)."""
         self._outer_opt_state: object = None
         """Cached outer optimizer state.  Initialised on the first call when
         ``persist_outer_state=True``; reset to None whenever ``persist_outer_state`` is set

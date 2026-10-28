@@ -11,7 +11,7 @@ from jax import Array, grad, jacfwd, jit, jvp, lax, value_and_grad
 from numpy.typing import ArrayLike
 from scipy.sparse.linalg import LinearOperator, minres
 
-from vertax.method_enum import BilevelOptimizationMethod
+from vertax.method_enum import BilevelOptimizationMethod, EPVariant
 from vertax.topo import ARC_HALF_ANGLE_MAX, ARC_HALF_ANGLE_MIN, update_T1_bounded
 
 # Per-step cap on how far a single vertex may move during inner relaxation,
@@ -499,6 +499,26 @@ def _apply_perm_to_state(
     return new_vertTable, new_heTable
 
 
+def _add_params_regularizer_grads(
+    grad_verts: Array,
+    grad_hes: Array,
+    grad_faces: Array,
+    params_regularizer: Callable | None,
+    vert_params: Array,
+    he_params: Array,
+    face_params: Array,
+) -> tuple[Array, Array, Array]:
+    """Add the gradient of `params_regularizer(vert_params, he_params, face_params)`, if any, to a hypergradient.
+
+    The regularizer depends on the parameters alone, so its gradient is added to the hypergradient of
+    every estimator before the outer solver's update, as in the periodic estimators (`vertax.opt`).
+    """
+    if params_regularizer is None:
+        return grad_verts, grad_hes, grad_faces
+    reg_verts, reg_hes, reg_faces = grad(params_regularizer, argnums=(0, 1, 2))(vert_params, he_params, face_params)
+    return grad_verts + reg_verts, grad_hes + reg_hes, grad_faces + reg_faces
+
+
 def cost_ad_bounded(
     vertTable: Array,
     angTable: Array,
@@ -600,6 +620,7 @@ def outer_opt_bounded(
     selected_faces: Array | None = None,
     image_target: Array | None = None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    params_regularizer: Callable | None = None,
     cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     """Outer optimization for a bounded mesh."""
@@ -632,6 +653,9 @@ def outer_opt_bounded(
         cap_vertex_step=cap_vertex_step,
     )
 
+    grad_verts, grad_hes, grad_faces = _add_params_regularizer_grads(
+        grad_verts, grad_hes, grad_faces, params_regularizer, vert_params, he_params, face_params
+    )
     params = {"vert_params": vert_params, "he_params": he_params, "face_params": face_params}
     grads = {"vert_params": grad_verts, "he_params": grad_hes, "face_params": grad_faces}
     opt_state = solver_outer.init(params)
@@ -880,9 +904,25 @@ def outer_eq_prop_bounded(
     image_target: Array | None,
     beta: float,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    params_regularizer: Callable | None = None,
+    ep_variant: EPVariant = EPVariant.CENTERED,
     cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
-    """Outer optimization for equilibrium propagation."""
+    """Outer optimization for equilibrium propagation.
+
+    `ep_variant` selects the estimator, as in the periodic `vertax.opt._compute_ep_grads`: CENTERED
+    (default) solves at `-beta` and `+beta` and divides by `2 * beta`; ONE_SIDED solves at `0` and
+    `+beta` and divides by `beta`. The returned tables are those of the free solve.
+    `params_regularizer(vert_params, he_params, face_params) -> scalar`, if given, has its gradient
+    added to the EP gradient before the outer solver's update.
+    """
+    ep_variant = EPVariant(ep_variant)
+    if ep_variant is EPVariant.CENTERED:
+        beta_free = -beta
+        denominator = 2.0 * beta
+    else:  # EPVariant.ONE_SIDED
+        beta_free = 0.0
+        denominator = beta
     # heTable_before = heTable
 
     (vertTable_free, angTable_free, heTable_free, faceTable_free), _loss_free = inner_eq_prop_bounded(
@@ -909,7 +949,7 @@ def outer_eq_prop_bounded(
         selected_hes,
         selected_faces,
         image_target,
-        beta=-beta,
+        beta=beta_free,
         update_T1_func=update_T1_func,
         cap_vertex_step=cap_vertex_step,
     )
@@ -979,7 +1019,7 @@ def outer_eq_prop_bounded(
         selected_hes,
         selected_faces,
         image_target,
-        beta=-beta,
+        beta=beta_free,
     )
 
     grad_loss_ep_nudged_verts, grad_loss_ep_nudged_hes, grad_loss_ep_nudged_faces = grad_ep(
@@ -1003,10 +1043,13 @@ def outer_eq_prop_bounded(
         beta,
     )
 
-    grad_verts = (1.0 / (2 * beta)) * ((grad_loss_ep_nudged_verts) - (grad_loss_ep_free_verts))
-    grad_hes = (1.0 / (2 * beta)) * ((grad_loss_ep_nudged_hes) - (grad_loss_ep_free_hes))
-    grad_faces = (1.0 / (2 * beta)) * ((grad_loss_ep_nudged_faces) - (grad_loss_ep_free_faces))
+    grad_verts = (1.0 / denominator) * ((grad_loss_ep_nudged_verts) - (grad_loss_ep_free_verts))
+    grad_hes = (1.0 / denominator) * ((grad_loss_ep_nudged_hes) - (grad_loss_ep_free_hes))
+    grad_faces = (1.0 / denominator) * ((grad_loss_ep_nudged_faces) - (grad_loss_ep_free_faces))
 
+    grad_verts, grad_hes, grad_faces = _add_params_regularizer_grads(
+        grad_verts, grad_hes, grad_faces, params_regularizer, vert_params, he_params, face_params
+    )
     params = {"vert_params": vert_params, "he_params": he_params, "face_params": face_params}
     grads = {"vert_params": grad_verts, "he_params": grad_hes, "face_params": grad_faces}
     opt_state = solver_outer.init(params)
@@ -1049,6 +1092,7 @@ def outer_implicit_bounded(
     selected_faces: Array | None,
     image_target: Array | None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    params_regularizer: Callable | None = None,
     cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     """Outer optimization for implicit differentiation method."""
@@ -1237,6 +1281,9 @@ def outer_implicit_bounded(
     grad_hes = L_in_derivative_hes.T @ dL_out_dvertang
     grad_faces = L_in_derivative_faces.T @ dL_out_dvertang
 
+    grad_verts, grad_hes, grad_faces = _add_params_regularizer_grads(
+        grad_verts, grad_hes, grad_faces, params_regularizer, vert_params, he_params, face_params
+    )
     params = {"vert_params": vert_params, "he_params": he_params, "face_params": face_params}
     grads = {"vert_params": grad_verts, "he_params": grad_hes, "face_params": grad_faces}
     opt_state = solver_outer.init(params)
@@ -1280,6 +1327,7 @@ def outer_adjoint_state_bounded(
     selected_faces: Array | None,
     image_target: Array | None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
+    params_regularizer: Callable | None = None,
     cap_vertex_step: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     """Outer optimization for adjoint state method."""
@@ -1415,6 +1463,9 @@ def outer_adjoint_state_bounded(
     grad_hes = -Lambda @ crossderivative_hes
     grad_faces = -Lambda @ crossderivative_faces
 
+    grad_verts, grad_hes, grad_faces = _add_params_regularizer_grads(
+        grad_verts, grad_hes, grad_faces, params_regularizer, vert_params, he_params, face_params
+    )
     params = {"vert_params": vert_params, "he_params": he_params, "face_params": face_params}
     grads = {"vert_params": grad_verts, "he_params": grad_hes, "face_params": grad_faces}
 
