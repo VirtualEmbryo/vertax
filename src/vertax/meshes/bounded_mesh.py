@@ -132,7 +132,7 @@ class BoundedMesh(Mesh):
             nb_fates (int, default=2): number of possible different fate marker for a cell.
 
         Returns:
-            Self: The corresponding mesh.
+            The corresponding mesh.
         """
         rng = np.random.default_rng(seed=random_key)
         seeds = rng.random((nb_seeds, 2)) * (width, height)
@@ -435,7 +435,7 @@ class BoundedMesh(Mesh):
             path (str): Path to the mesh file (.npz).
 
         Returns:
-            Mesh: the mesh loaded from the .npz file.
+            The mesh loaded from the .npz file.
 
         Raises:
             ValueError: if the faces of the mesh are clockwise (see `BoundedMesh`).
@@ -537,7 +537,7 @@ class BoundedMesh(Mesh):
                     Defaults to "constants.txt".
 
         Returns:
-            Self: The loaded mesh.
+            The loaded mesh.
 
         Raises:
             ValueError: if the faces of the mesh are clockwise (see `BoundedMesh`).

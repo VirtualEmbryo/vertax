@@ -1,0 +1,52 @@
+# Build the documentation website with `mkdocs build --strict` and, on a push to main, deploy it to
+# GitHub Pages. The site is built from `mkdocs.yml` and `website/`; the pdoc pages in `docs/` are not
+# involved. Pages must be enabled in the repository settings, with "GitHub Actions" as the source.
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: documentation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      # mkdocstrings reads the sources in src/ without importing them, so only the docs group is needed.
+      - name: Install the documentation tools
+        run: uv sync --only-group docs --frozen
+
+      - name: Build the site
+        run: uv run --no-sync mkdocs build --strict
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

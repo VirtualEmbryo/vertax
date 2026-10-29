@@ -199,13 +199,13 @@ def gd_linesearch(
 
     Plain gradient descent picks the search direction ``d = -g`` but leaves the
     step size to a fixed learning rate. This solver keeps ``d = -g`` (no conjugate
-    term, unlike :func:`cg_linesearch`) but chooses the step by the same
+    term, unlike `cg_linesearch`) but chooses the step by the same
     ``optax.scale_by_zoom_linesearch`` used by CG / lbfgs, so each step satisfies
     the strong Wolfe conditions instead of relying on a hand-tuned learning rate.
 
     Like every line-search solver, its ``update`` requires ``value``, ``grad`` and
     ``value_fn`` (it re-evaluates the loss along ``d``); the enclosing loop must
-    forward them, exactly as for :func:`cg_linesearch`.
+    forward them, exactly as for `cg_linesearch`.
 
     Note (AD incompatibility): the zoom line search runs an inner
     ``lax.while_loop`` with dynamic bounds, which reverse-mode AD cannot
@@ -214,7 +214,7 @@ def gd_linesearch(
     name contains ``"linesearch"`` so the guard in ``bilevelopt.py`` rejects the
     combination automatically.
 
-    ``linesearch_initial_guess`` has the meaning it has in :func:`cg_linesearch`.
+    ``linesearch_initial_guess`` has the meaning it has in `cg_linesearch`.
     """
     linesearch = optax.scale_by_zoom_linesearch(
         max_linesearch_steps=max_linesearch_steps, initial_guess_strategy=linesearch_initial_guess

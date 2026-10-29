@@ -14,6 +14,7 @@ Understanding, inferring, and designing these mechanics is a central challenge i
 In **VertAX**, a `Mesh` represents a vertex model of an epithelial tissue. It is made of faces (cells), edges (interface between cells) and vertices (where 3 cells or more meet).
 
 More specifically, two types of meshes are currently supported:
+
 - `PbcMesh` have Periodic Boundary Conditions, and are used for bulk tissue dynamics without explicit external boundaries.
 - `BoundedMesh` are designed for finite tissue clusters, with curved free interfaces.
 
@@ -40,6 +41,7 @@ Here, $X$ denotes the tissue configuration, i.e. the vertex positions of the mes
 In other words, VertAX repeatedly solves a mechanical equilibrium problem for a given parameter set $\\theta$, then updates those parameters to better match data or a design objective.
 
 In symmetry with meshes, a base abstract class `_BilevelOptimizer` defines common hyper-parameters and methods for the bilevel optimization, but you need to use the specialized classes:
+
 - `PbcBilevelOptimizer` for `PbcMesh`,
 - `BoundedBilevelOptimizer` for `BoundedMesh`.
 

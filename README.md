@@ -4,7 +4,7 @@
 
 [![preprint](https://img.shields.io/badge/preprint-green)](https://arxiv.org/abs/2604.06896)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Documentation](https://img.shields.io/badge/documentation-green)](https://html-preview.github.io/?url=https://github.com/VirtualEmbryo/VertAX/blob/main/docs/vertax.html)
+[![Documentation](https://img.shields.io/badge/documentation-green)](https://html-preview.github.io/?url=https://github.com/VirtualEmbryo/vertax/blob/main/docs/vertax.html)
 
 <!-- PyPI badge removed 2026-08-15: `vertax` / `vertAX` are both unregistered on PyPI
      (pypi.org/pypi/vertax/json returns HTTP 404), so the badge rendered as "unknown" and
@@ -29,7 +29,7 @@ for vertex modeling and inverse design of epithelial tissues.
 </b>
 <br><br>
 
-[![Typing SVG](https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=18&duration=2000&pause=1200&color=38C2FF&center=false&width=295&height=30&lines=%5C+Forward+Simulations;%5C+Parameter+Inference;%5C+Inverse+Mechanical+Design)](https://github.com/VirtualEmbryo/VertAX) <br><b>— all in one unified Python package.</b>
+[![Typing SVG](https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=18&duration=2000&pause=1200&color=38C2FF&center=false&width=295&height=30&lines=%5C+Forward+Simulations;%5C+Parameter+Inference;%5C+Inverse+Mechanical+Design)](https://github.com/VirtualEmbryo/vertax) <br><b>— all in one unified Python package.</b>
 
 </td>
 </tr>
@@ -111,8 +111,8 @@ source .venv/bin/activate
 ### From source
 
 ```sh
-git clone https://github.com/VirtualEmbryo/VertAX.git
-cd VertAX
+git clone https://github.com/VirtualEmbryo/vertax.git
+cd vertax
 pip install -e .
 ```
 
@@ -209,7 +209,7 @@ accuracy.
 
 ## API Reference
 
-See the [documentation](https://html-preview.github.io/?url=https://github.com/VirtualEmbryo/VertAX/blob/main/docs/vertax.html).
+See the [documentation](https://html-preview.github.io/?url=https://github.com/VirtualEmbryo/vertax/blob/main/docs/vertax.html).
 
 ---
 

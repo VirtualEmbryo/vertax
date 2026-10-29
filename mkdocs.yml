@@ -1,0 +1,114 @@
+# The documentation website. Its sources are in `website/`; the pdoc pages in `docs/` are separate.
+# Build it with the `docs` dependency group:
+#     uv sync --group docs
+#     uv run mkdocs build --strict      # into site/, which is not tracked
+#     uv run mkdocs serve               # http://localhost:8000
+site_name: VertAX
+site_description: A differentiable JAX-based framework for vertex modeling and inverse design of epithelial tissues
+site_url: https://virtualembryo.github.io/vertax/
+repo_url: https://github.com/VirtualEmbryo/vertax
+copyright: Copyright 2025-2026 the VertAX authors. GPL-3.0-or-later.
+docs_dir: website
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+  palette:
+    - scheme: default
+      toggle: {icon: material/brightness-7, name: Dark mode}
+    - scheme: slate
+      toggle: {icon: material/brightness-4, name: Light mode}
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.arithmatex: {generic: true}
+  - pymdownx.snippets: {base_path: ["."], check_paths: true}
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            # Several functions take un-annotated arguments (energies, patches); their docstrings say what they are.
+            # A Returns section is one block of text: several docstrings wrap it over lines or use a list.
+            docstring_options: {warn_missing_types: false, returns_multiple_items: false}
+            show_source: false
+            show_root_heading: false
+            show_root_toc_entry: false
+            members_order: source
+            filters: ["!^_"]
+            heading_level: 2
+            merge_init_into_class: true
+            show_signature_annotations: true
+            separate_signature: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - User guide:
+      - The two mesh types: user-guide/meshes.md
+      - Energies: user-guide/energies.md
+      - Relaxation and solvers: user-guide/relaxation.md
+      - T1 transitions: user-guide/t1-transitions.md
+      - Numerical precision: user-guide/precision.md
+      - Inverse problems: user-guide/inverse-problems.md
+      - Costs: user-guide/costs.md
+      - Rheology: user-guide/rheology.md
+      - Meshes from images and masks: user-guide/images-and-masks.md
+      - Clamped patches: user-guide/clamped-patches.md
+      - Plotting and saving: user-guide/plotting-and-saving.md
+  - Examples:
+      - examples/index.md
+      - examples/periodic-relaxation.md
+      - examples/bounded-relaxation.md
+      - examples/tension-inference.md
+      - examples/bounded-elongation.md
+      - examples/gradient-estimators.md
+      - examples/many-epochs.md
+      - examples/line-search-solvers.md
+      - examples/t1-statistics.md
+      - examples/image-cost.md
+      - examples/shear-rheometry.md
+      - examples/traced-patch.md
+  - API reference:
+      - api/index.md
+      - api/mesh.md
+      - api/pbc-mesh.md
+      - api/bounded-mesh.md
+      - api/plot.md
+      - api/bilevel-optimizer.md
+      - api/pbc-bilevel-optimizer.md
+      - api/bounded-bilevel-optimizer.md
+      - api/shear-rheology-optimizer.md
+      - api/method-enum.md
+      - api/energy.md
+      - api/cost.md
+      - api/opt.md
+      - api/opt-bounded.md
+      - api/cg.md
+      - api/topo.md
+      - api/geo.md
+      - api/rheology.md
+      - api/trace.md
+      - api/clamped.md
+      - api/mask-analysis.md
+  - Changelog: changelog.md
+  - Release notes: release-notes.md
