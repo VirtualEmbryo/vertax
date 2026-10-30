@@ -152,6 +152,11 @@ def _minimize_bounded(  # noqa: C901
         jacnums = [0, 1]
     else:
         opt_state = solver.init(x0)
+    # A line-search solver (optax.lbfgs, cg_linesearch, gd_linesearch) chains in
+    # optax.scale_by_zoom_linesearch, whose state is its signature (as in
+    # bilevelopt._has_zoom_linesearch_state). Read at trace time.
+    substates = opt_state if isinstance(opt_state, tuple) else (opt_state,)
+    line_search = any(s.__class__.__name__ == "ScaleByZoomLinesearchState" for s in substates)
 
     # Initial loss and bookkeeping
     initial_L = L_in(
@@ -191,6 +196,13 @@ def _minimize_bounded(  # noqa: C901
 
         # Gradient wrt chosen argnums
         grads = grad(L_in, argnums=jacnums)(vt, at, ht, ft, selected_verts, selected_hes, selected_faces, vp, hp, fp)
+        if argnums == 0 and line_search:
+            # An arc on its limit whose gradient points past it cannot follow that gradient: the
+            # update below clips it back. Leave that component out, so that the solver's direction
+            # and the slope its line search expects are those of the clipped energy it is scored on.
+            ga = grads[1]
+            blocked = ((at <= ARC_HALF_ANGLE_MIN) & (ga > 0)) | ((at >= ARC_HALF_ANGLE_MAX) & (ga < 0))
+            grads = (grads[0], jnp.where(blocked, 0.0, ga))
 
         # value_fn re-evaluates L_in as a function of the solver's params only
         # (everything else held fixed at the current step). Line-search solvers
@@ -199,7 +211,12 @@ def _minimize_bounded(  # noqa: C901
             params_cur = (vt, at)
 
             def value_fn(p: tuple[Array, Array]) -> Array:
+                # The angles clipped as the update below clips them: the line search must score
+                # the point the step reaches. Scored unclipped, a trial step that pushes an arc
+                # past a half circle reads an energy the tissue never gets, the accepted step is
+                # then no descent step, and the relaxation stalls with the energy oscillating.
                 vt_p, at_p = p
+                at_p = jnp.clip(at_p, ARC_HALF_ANGLE_MIN, ARC_HALF_ANGLE_MAX)
                 return L_in(vt_p, at_p, ht, ft, selected_verts, selected_hes, selected_faces, vp, hp, fp)
         elif argnums == 2:
             params_cur = ht
