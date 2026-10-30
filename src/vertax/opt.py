@@ -154,6 +154,21 @@ def _record_t1(counts: Array, steps: Array, source: str) -> None:
     _T1_RECORDER.append(dict(source=source, counts=np.asarray(counts)[: int(steps)]))
 
 
+def _shift_stored_positions(opt_state, shift: Array):  # noqa: ANN001, ANN202
+    """Add ``shift`` to the positions ``optax.lbfgs()`` keeps in its state; any other state is returned unchanged.
+
+    ``scale_by_lbfgs`` stores the parameters it was last called at and pairs the next ones with them
+    (``params - state.params``). A vertex that ``update_pbc`` wrapped back into the box has jumped by a box
+    width the solver never took: shifting the stored positions by the same jump leaves the step alone in the
+    pair. Of the solvers the loop supports, only L-BFGS stores positions: nonlinear CG and steepest descent
+    keep gradients and directions, which a wrap does not change.
+    """
+    def shift_lbfgs(s):  # noqa: ANN001, ANN202
+        return s._replace(params=s.params + shift) if isinstance(s, optax.ScaleByLBFGSState) else s
+
+    return jax.tree.map(shift_lbfgs, opt_state, is_leaf=lambda s: isinstance(s, optax.ScaleByLBFGSState))
+
+
 def _with_incoming_integer_dtypes(new_state, old_state):  # noqa: ANN001, ANN202
     """Cast an integer leaf of ``new_state`` to the dtype of the same leaf of ``old_state`` where they differ.
 
@@ -428,6 +443,7 @@ def _jit_minimize(  # noqa: C901
         opt_state = lax.cond(is_running, lambda: new_opt_state, lambda: opt_state)
         stagnation_count = lax.cond(is_running, lambda: new_stagnation_count, lambda: stagnation_count)
         should_stop = new_should_stop  # should_stop is a flag for the *next* iteration
+        vt_stepped = vt
 
         # Geometry updates (must also be conditional/masked)
         new_vt_pbc, new_ht_pbc, new_ft_pbc = update_pbc(vt, ht, ft, width, height)
@@ -470,6 +486,15 @@ def _jit_minimize(  # noqa: C901
             n_kept = jnp.sum((ht[even, 0] != ht_before_t1[even, 0]) & (ht[even, 1] != ht_before_t1[even, 1]))
             t1_counts = carry[12].at[i].set(
                 jnp.where(is_running, jnp.stack([n_presented, n_kept.astype(jnp.int32)]), 0))
+
+        # update_pbc, above and inside the T1 step, wraps a vertex that left the box back inside: a jump
+        # by a box width that the solver did not take. Unseen, it enters the next curvature pair of
+        # L-BFGS, whose following direction then climbs. Shift the positions the solver stored by the
+        # same jump. The other displacements since the step (a T1 repositioning) lie far below half a
+        # box and round to zero. Before the reset below, which replaces the state as a whole.
+        if argnums == 0:
+            box = jnp.array([width, height], dtype=vt.dtype)
+            opt_state = _shift_stored_positions(opt_state, box * jnp.round((vt - vt_stepped) / box))
 
         # A T1 transition changes the mesh the solver state describes: CG's conjugate direction and
         # the curvature pairs of L-BFGS refer to the old topology and vertex positions. Opt-in reset
