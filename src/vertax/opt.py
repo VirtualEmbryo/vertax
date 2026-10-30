@@ -154,21 +154,6 @@ def _record_t1(counts: Array, steps: Array, source: str) -> None:
     _T1_RECORDER.append(dict(source=source, counts=np.asarray(counts)[: int(steps)]))
 
 
-def _with_incoming_integer_dtypes(new_state, old_state):  # noqa: ANN001, ANN202
-    """Cast an integer leaf of ``new_state`` to the dtype of the same leaf of ``old_state`` where they differ.
-
-    Under ``jax_enable_x64`` the zoom line search of ``optax.lbfgs()`` returns an int64 step counter
-    where it was initialised with int32, and ``lax.cond`` in the loop requires identical types. The
-    comparison is made at trace time, so a solver whose dtypes already match gets no extra operation.
-    """
-    def cast(new, old):  # noqa: ANN001, ANN202
-        if hasattr(new, "dtype") and jnp.issubdtype(new.dtype, jnp.integer) and new.dtype != old.dtype:
-            return new.astype(old.dtype)
-        return new
-
-    return jax.tree.map(cast, new_state, old_state)
-
-
 def _shift_stored_positions(opt_state, shift: Array):  # noqa: ANN001, ANN202
     """Add ``shift`` to the positions ``optax.lbfgs()`` keeps in its state; any other state is returned unchanged.
 
@@ -182,6 +167,21 @@ def _shift_stored_positions(opt_state, shift: Array):  # noqa: ANN001, ANN202
         return s._replace(params=s.params + shift) if isinstance(s, optax.ScaleByLBFGSState) else s
 
     return jax.tree.map(shift_lbfgs, opt_state, is_leaf=lambda s: isinstance(s, optax.ScaleByLBFGSState))
+
+
+def _with_incoming_integer_dtypes(new_state, old_state):  # noqa: ANN001, ANN202
+    """Cast an integer leaf of ``new_state`` to the dtype of the same leaf of ``old_state`` where they differ.
+
+    Under ``jax_enable_x64`` the zoom line search of ``optax.lbfgs()`` returns an int64 step counter
+    where it was initialised with int32, and ``lax.cond`` in the loop requires identical types. The
+    comparison is made at trace time, so a solver whose dtypes already match gets no extra operation.
+    """
+    def cast(new, old):  # noqa: ANN001, ANN202
+        if hasattr(new, "dtype") and jnp.issubdtype(new.dtype, jnp.integer) and new.dtype != old.dtype:
+            return new.astype(old.dtype)
+        return new
+
+    return jax.tree.map(cast, new_state, old_state)
 
 
 ###############################
