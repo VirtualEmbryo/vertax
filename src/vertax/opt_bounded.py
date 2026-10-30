@@ -82,6 +82,18 @@ LossEPFunction = Callable[
     ],
     Array,
 ]
+
+
+def _cap_vertex_step(step: Array, max_step: float) -> Array:
+    """Shorten every vertex displacement (one row of ``step``) longer than ``max_step`` to it, keeping its direction.
+
+    The length is taken from the squared length floored away from zero, so that the gradient stays finite for a
+    vertex that does not move: a line-search solver differentiates ``value_fn``, which applies this cap too.
+    """
+    vnorm = jnp.sqrt(jnp.maximum(jnp.sum(step**2, axis=1, keepdims=True), 1e-24))
+    return step * jnp.minimum(1.0, max_step / vnorm)
+
+
 ###############################
 ## AUTOMATIC DIFFERENTIATION ##
 ###############################
@@ -216,6 +228,12 @@ def _minimize_bounded(  # noqa: C901
                 # past a half circle reads an energy the tissue never gets, the accepted step is
                 # then no descent step, and the relaxation stalls with the energy oscillating.
                 vt_p, at_p = p
+                if cap_vertex_step:
+                    # The vertex steps capped as the update below caps them, for the same reason.
+                    # Written as a correction to vt_p, so that vt_p is left exactly as it is when no
+                    # vertex is capped.
+                    vstep = vt_p - vt
+                    vt_p = vt_p + (_cap_vertex_step(vstep, MAX_VERTEX_STEP_FACTOR * min_dist_T1) - vstep)
                 at_p = jnp.clip(at_p, ARC_HALF_ANGLE_MIN, ARC_HALF_ANGLE_MAX)
                 return L_in(vt_p, at_p, ht, ft, selected_verts, selected_hes, selected_faces, vp, hp, fp)
         elif argnums == 2:
@@ -284,12 +302,12 @@ def _minimize_bounded(  # noqa: C901
             # property of those settings, not a guarantee -- sgd(lr=0.01) with
             # min_dist_T1=0.005 gives a cap of 0.025 that does bite. Gating it keeps
             # them untouched by construction rather than by coincidence.
+            #
+            # value_fn above applies the same cap, so the line search scores the point
+            # this capped step reaches.
             vstep = updates[0].at[sel].get()
             if cap_vertex_step:
-                max_step = MAX_VERTEX_STEP_FACTOR * min_dist_T1
-                vnorm = jnp.linalg.norm(vstep, axis=1, keepdims=True)
-                vscale = jnp.minimum(1.0, max_step / jnp.maximum(vnorm, 1e-12))
-                vstep = vstep * vscale
+                vstep = _cap_vertex_step(vstep, MAX_VERTEX_STEP_FACTOR * min_dist_T1)
             new_vt = vt.at[sel].set(vt[sel] + vstep)
             # Keep every arc between a chord and a half circle at every step. The T1 routine applies
             # the same limit when it is called, but with T1 transitions disabled nothing else does,
