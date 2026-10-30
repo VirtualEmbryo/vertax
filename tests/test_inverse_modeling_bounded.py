@@ -86,7 +86,10 @@ def test_regression() -> None:
     def _neighbour_histogram(mesh):
         """Sorted edges-per-face -- invariant to relabelling and to vertex positions."""
         e = np.asarray(mesh.edges)
-        return sorted(int((e[:, 5] == f).sum()) for f in range(mesh.nb_faces))
+        # Column 7 is the face of a bounded half-edge (5 is the outer source); the outer half-edge of
+        # a free interface belongs to no cell.
+        in_a_cell = (e[:, 3] + e[:, 5]) != 0
+        return sorted(int(((e[:, 7] == f) & in_a_cell).sum()) for f in range(mesh.nb_faces))
 
     e_now, r_now = _energy_and_residual(bounded_mesh)
     e_ref, r_ref = _energy_and_residual(ref_mesh)
