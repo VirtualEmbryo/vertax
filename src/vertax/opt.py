@@ -169,6 +169,16 @@ def _with_incoming_integer_dtypes(new_state, old_state):  # noqa: ANN001, ANN202
     return jax.tree.map(cast, new_state, old_state)
 
 
+def _cap_vertex_step(step: Array, max_step: float) -> Array:
+    """Shorten every vertex displacement (one row of ``step``) longer than ``max_step`` to it, keeping its direction.
+
+    The length is taken from the squared length floored away from zero, so that the gradient stays finite for a
+    vertex that does not move: a line-search solver differentiates ``value_fn``, which applies this cap too.
+    """
+    vnorm = jnp.sqrt(jnp.maximum(jnp.sum(step**2, axis=1, keepdims=True), 1e-24))
+    return step * jnp.minimum(1.0, max_step / vnorm)
+
+
 ###############################
 ## AUTOMATIC DIFFERENTIATION ##
 ###############################
@@ -278,6 +288,14 @@ def _jit_minimize(  # noqa: C901
             params_cur = vt
 
             def value_fn(p: Array) -> Array:
+                if cap_vertex_step:
+                    # The step capped as the update below caps it: the line search must score the
+                    # point the step reaches. Scored uncapped, a long trial step reads the energy of a
+                    # point the tissue never gets, and the accepted step need not lower the energy.
+                    # Written as a correction to p, so that p is left exactly as it is when no vertex
+                    # is capped.
+                    step = p - vt
+                    p = p + (_cap_vertex_step(step, MAX_VERTEX_STEP_FACTOR * min_dist_T1) - step)
                 return L_in(
                     p[selected_verts],
                     ht[selected_hes],
@@ -391,11 +409,11 @@ def _jit_minimize(  # noqa: C901
         # unconditionally would silently alter fixed-step solvers whenever the cap
         # falls below their step -- sgd(lr=0.01) with min_dist_T1=0.005 gives a cap
         # of 0.025, which does bite and shifts the result.
+        #
+        # value_fn above applies the same cap, so the line search scores the point
+        # this capped step reaches.
         if argnums == 0 and cap_vertex_step:
-            max_step = MAX_VERTEX_STEP_FACTOR * min_dist_T1
-            vnorm = jnp.linalg.norm(updates_sel, axis=1, keepdims=True)
-            vscale = jnp.minimum(1.0, max_step / jnp.maximum(vnorm, 1e-12))
-            updates_sel = updates_sel * vscale
+            updates_sel = _cap_vertex_step(updates_sel, MAX_VERTEX_STEP_FACTOR * min_dist_T1)
 
         # Conditional application of optimization update and state
         arrays = [vt, ht, ft, vp, hp, fp]
