@@ -38,7 +38,17 @@ def test_regression() -> None:
     bilevel_optimizer = BoundedBilevelOptimizer()
     bilevel_optimizer.min_dist_T1 = 0.025
     bilevel_optimizer.inner_solver = optax.sgd(learning_rate=0.01)
-    bilevel_optimizer.outer_solver = optax.adam(learning_rate=0.01, nesterov=True)
+    # Clipped SGD, not Adam: the bounded outer step starts its solver from a fresh state at every
+    # call, so Adam stepped every parameter by 1.47 lr whatever its gradient, and a near-zero
+    # gradient whose sign flips under float32 rounding sent its tension the other way. The T1s
+    # then diverged from one machine to the next (final energy 51.766 on the Mac that made the
+    # reference, 51.991 on Linux x86-64 with the same jax 0.4.34, 51.891 there with jax 0.7.1).
+    # SGD follows the gradient, but at the third outer step the EP gradient on one cell's A0
+    # reaches ~30 and plain SGD moved the A0s to 0.33-0.91; clipping the global norm to 1 keeps
+    # that step at 0.006. With it jax 0.4.34 and 0.7.1 take the same topology at every step and
+    # end within 6 ppm. A line-search solver cannot be the outer one: no outer step passes it a
+    # `value_fn`.
+    bilevel_optimizer.outer_solver = optax.chain(optax.clip_by_global_norm(1.0), optax.sgd(learning_rate=0.01))
     bilevel_optimizer.max_nb_iterations = 1000
     bilevel_optimizer.tolerance = 1e-6
     bilevel_optimizer.patience = 5
@@ -73,7 +83,7 @@ def test_regression() -> None:
     # The element-wise difference is printed, not asserted.
     #
     # ON THE THRESHOLD: this configuration stops on the optimiser's tolerance/patience rule, not on
-    # a small force residual -- MEASURED, the reference sits at ||grad E||/|E| = 4.28e-02. An
+    # a small force residual -- MEASURED, the reference sits at ||grad E||/|E| = 4.61e-02. An
     # absolute bound would be the wrong quantity, so the assertion is relative to the reference.
     # ------------------------------------------------------------------------------------
     def _energy_and_residual(mesh):
