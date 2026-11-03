@@ -4,6 +4,7 @@ import os
 from collections.abc import Callable
 from functools import partial
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
@@ -12,6 +13,7 @@ from numpy.typing import ArrayLike
 from scipy.sparse.linalg import LinearOperator, minres
 
 from vertax.method_enum import BilevelOptimizationMethod, EPVariant
+from vertax.opt import _with_incoming_integer_dtypes
 from vertax.topo import ARC_HALF_ANGLE_MAX, ARC_HALF_ANGLE_MIN, update_T1_bounded
 
 # Per-step cap on how far a single vertex may move during inner relaxation,
@@ -99,7 +101,7 @@ def _cap_vertex_step(step: Array, max_step: float) -> Array:
 ###############################
 
 
-@partial(jit, static_argnums=(7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19))
+@partial(jit, static_argnums=(7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20))
 def _minimize_bounded(  # noqa: C901
     vertTable: Array,
     angTable: Array,
@@ -121,6 +123,7 @@ def _minimize_bounded(  # noqa: C901
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
+    reset_solver_on_t1: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
     if selected_verts is None:
         selected_verts = jnp.arange(vertTable.shape[0])
@@ -274,6 +277,7 @@ def _minimize_bounded(  # noqa: C901
             grad=grads,  # ty:ignore[unknown-argument]
             value_fn=value_fn,  # ty:ignore[unknown-argument]
         )
+        new_opt_state = _with_incoming_integer_dtypes(new_opt_state, opt_state)
         # updates, new_opt_state = solver.update(grads, opt_state)
 
         # Apply updates to the chosen array on selected indices
@@ -337,6 +341,7 @@ def _minimize_bounded(  # noqa: C901
         should_stop = new_should_stop
 
         # Geometry updates
+        ht_before_t1 = ht
         new_vt_T1, new_at_T1, new_ht_T1, new_ft_T1 = update_T1_func(
             vt,
             at,
@@ -356,6 +361,16 @@ def _minimize_bounded(  # noqa: C901
         at = lax.cond(is_running, lambda: new_at_T1, lambda: at)
         ht = lax.cond(is_running, lambda: new_ht_T1, lambda: ht)
         ft = lax.cond(is_running, lambda: new_ft_T1, lambda: ft)
+
+        # A T1 transition changes the mesh the solver state describes: CG's conjugate direction and
+        # the curvature pairs of L-BFGS refer to the old topology, vertex positions and arc angles.
+        # Opt-in reset of the solver state to its initial value at the new positions and angles
+        # whenever the topology has changed; integer and float leaves keep their dtypes so that the
+        # state type is stable.
+        if reset_solver_on_t1 and argnums == 0:
+            topology_changed = is_running & jnp.any(ht != ht_before_t1)
+            fresh = jax.tree.map(lambda new, old: new.astype(old.dtype), solver.init((vt, at)), opt_state)
+            opt_state = lax.cond(topology_changed, lambda: fresh, lambda: opt_state)
 
         # Shift prev_L_values
         new_prev_L_values = prev_L_values.at[1:].set(prev_L_values[:-1])
@@ -425,8 +440,12 @@ def inner_opt_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
+    reset_solver_on_t1: bool = False,
 ) -> tuple[tuple[Array, Array, Array, Array], Array]:
     """Inner optimization for a bounded mesh.
+
+    Use ``cap_vertex_step=True`` with line-search solvers, and ``reset_solver_on_t1=True`` with
+    ``optax.lbfgs()``, whose curvature pairs otherwise outlive the topology they were measured on.
 
     Args:
         cap_vertex_step: Clip each per-step vertex displacement to
@@ -434,6 +453,8 @@ def inner_opt_bounded(
             (cg_linesearch, gd_linesearch, lbfgs), which choose their own step size
             and can otherwise move a vertex across whole cells in one iteration.
             Off by default, so fixed-step solvers (adam, sgd) are untouched.
+        reset_solver_on_t1: Re-initialise the solver state at the new vertex positions and arc
+            angles after every iteration whose T1 step changed the topology. Off by default.
     """
     # Use the general minimize function with argnums=0 (optimize vertTable)
     (vt_f, at_f, ht_f, ft_f, _vp_f, _hp_f, _fp_f), (L_hist_full, step_f_array) = _minimize_bounded(
@@ -457,6 +478,7 @@ def inner_opt_bounded(
         update_T1_func=update_T1_func,
         perform_energy_check=perform_energy_check,
         cap_vertex_step=cap_vertex_step,
+        reset_solver_on_t1=reset_solver_on_t1,
     )
 
     # Convert the JAX array step_f to a Python integer
