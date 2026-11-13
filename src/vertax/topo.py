@@ -1257,6 +1257,7 @@ def update_T1_bounded(  # noqa: C901, N802
         he_twin_next = he_twin[1]
         he_face = he[7]
         he_twin_face = he_twin[7]
+        not_arc_twin = jnp.logical_or(heTable_[idx_twin, 3] != 0, heTable_[idx_twin, 5] != 0)
 
         # There's an "emergency" when previous AND next edges are outside edges ;
         # or if we are in a triangular face (next next is prev), or so is the twin's face,
@@ -1265,7 +1266,8 @@ def update_T1_bounded(  # noqa: C901, N802
         # We will just move away the vertices to elongate the edge.
         emergency = jnp.logical_and(heTable_.at[he_prev, 3].get() == 0, heTable_.at[he_next, 3].get() == 0)
         emergency = jnp.logical_or(emergency, heTable_.at[he_next, 1].get() == he_prev)
-        emergency = jnp.logical_or(emergency, heTable_.at[he_twin_next, 1].get() == he_twin_prev)
+        # emergency = jnp.logical_or(emergency, heTable_.at[he_twin_next, 1].get() == he_twin_prev)
+        emergency = jnp.logical_or(emergency, jnp.logical_and(heTable_[he_twin_next, 1] == he_twin_prev, not_arc_twin))
         emergency = jnp.logical_or(emergency, jnp.sum(heTable_[:, 5] != 0) == 2)
         return jax.lax.cond(
             emergency,
