@@ -474,9 +474,12 @@ def make_cost_hessian_weighted(
     $\tfrac12\lVert\mathbf H^{+}\mathbf M\,\delta\boldsymbol\theta\rVert^2$ to first order in the
     parameter error $\delta\boldsymbol\theta$ ($\mathbf M$, the derivative of the forces with respect
     to the parameters), so the soft modes of the tissue, with small Hessian eigenvalues, amplify any
-    geometric error; $\mathcal C_W$ is $\tfrac12\lVert\mathbf M\,\delta\boldsymbol\theta\rVert^2$ to the
-    same order, the force residual, which they do not amplify. The normalization multiplies the cost
-    by a constant and keeps its scale comparable to that of `cost_v2v`.
+    geometric error. With the Hessian $\mathbf H$ at the true parameters in place of
+    $\widehat{\mathbf H}$, the same expansion gives $\tfrac12\lVert\mathbf M\,\delta\boldsymbol\theta\rVert^2$,
+    the force residual, which the soft modes do not amplify; $\widehat{\mathbf H}$ approximates
+    $\mathbf H$ up to its normalization, without using the parameters being inferred. The
+    normalization multiplies the cost by a constant and keeps its scale comparable to that of
+    `cost_v2v`.
 
     $\widehat{\mathbf H}$ is computed once, from ``target``, and belongs to its topology: the cost
     compares vertex $i$ of the mesh with vertex $i$ of the target, and is meant for a mesh with the
