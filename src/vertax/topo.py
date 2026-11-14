@@ -384,7 +384,7 @@ class T1TensionReset:
     sigmoid_tensions: bool = False
 
 
-@partial(jit, static_argnums=(7, 8), static_argnames=("tension_reset",))
+@partial(jit, static_argnums=(7, 8), static_argnames=("tension_reset", "reopen_margin"))
 def update_T1_bounded(  # noqa: C901, N802
     vertTable: Array,
     angTable: Array,
@@ -400,6 +400,7 @@ def update_T1_bounded(  # noqa: C901, N802
     selected_faces: Array | None = None,
     perform_energy_check: bool = False,
     tension_reset: T1TensionReset | None = None,
+    reopen_margin: float | None = None,
 ) -> tuple[Array, Array, Array, Array] | tuple[Array, Array, Array, Array, Array, Array]:
     """Find and apply T1 topological transitions for bounded meshes.
 
@@ -415,6 +416,14 @@ def update_T1_bounded(  # noqa: C901, N802
     the edge parameters after every reset, and for each edge the number of transitions accepted in
     this call (0 or 1). Without it, the return value and every number are those of the routine
     without the option.
+
+    The new edge (case B), the re-stretched edge (case A) and the two vertices moved apart when a
+    flip is impossible are all given the same length about the old edge's midpoint: by default
+    ``min_dist_T1 + 1e-3``, the length every committed bounded result was produced with, and with
+    ``reopen_margin`` set, ``(1 + reopen_margin) * min_dist_T1``, as for the periodic `update_T1`. A new
+    edge only ``1e-3`` above the threshold can be shortened below it again by one relaxation step and
+    flip straight back. Like the periodic margin, it is passed with
+    ``functools.partial(update_T1_bounded, reopen_margin=...)``.
     """
     num_edges = heTable.shape[0] // 2
     if tension_reset is not None and jnp.shape(he_params) != (num_edges,):
@@ -442,7 +451,10 @@ def update_T1_bounded(  # noqa: C901, N802
         return he_params_.at[edge].set(jnp.where(n_others > 0, new_param, he_params_[edge]))
 
     angTable = jnp.clip(angTable, ARC_HALF_ANGLE_MIN, ARC_HALF_ANGLE_MAX)
-    scale = (min_dist_T1 + 10 ** (-3)) / 2
+    if reopen_margin is None:
+        scale = (min_dist_T1 + 10 ** (-3)) / 2
+    else:
+        scale = (min_dist_T1 + min_dist_T1 * reopen_margin) / 2
 
     # This case may externalize a cell (moves it to be contact with the medium), depending on the energy check
     # It assumes that out of the 5 edges that define the T1, 2 are curved, but not the one triggering the T1
