@@ -85,7 +85,6 @@ nav:
       - examples/many-epochs.md
       - examples/line-search-solvers.md
       - examples/t1-statistics.md
-      - examples/image-cost.md
       - examples/shear-rheometry.md
       - examples/traced-patch.md
   - API reference:

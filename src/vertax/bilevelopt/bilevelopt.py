@@ -214,7 +214,7 @@ class _BilevelOptimizer:
         """Faces table of a target mesh if any."""
         # Those attributes are not always used (depends on the bilevel_optimization_method)
         self.image_target: Array = jnp.array([])
-        """Image target if any."""
+        """Passed to the outer cost as its last argument, ``image_target``; no cost of the library uses it."""
         self.beta: Any = _UNSET
         """β parameter used for Equilibrium Propagation.
 

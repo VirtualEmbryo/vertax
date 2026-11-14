@@ -15,7 +15,6 @@ Sizes are small, so that each page runs in a few minutes at most on one CPU thre
 | [Many epochs](many-epochs.md) | `do_n_bilevel_optimization` with reports, saved files and a custom metric | `tests/test_n_bilevel_opt.py` |
 | [Line-search solvers](line-search-solvers.md) | `gd_linesearch`, the vertex step cap, and L-BFGS with T1 transitions | `tests/test_cap_vertex_step.py`, `tests/test_minimize_lbfgs_t1_reset.py` |
 | [T1 statistics](t1-statistics.md) | counting T1 transitions in relaxations and estimators | `tests/test_t1_counts_in_loop_state.py` |
-| [Image cost](image-cost.md) | rendering a mesh as an image, and the image cost and its gradient | `tests/test_dmic.py`, README |
 | [Shear rheometry](shear-rheometry.md) | the drive mode and its properties | `tests/test_rheology.py`, README |
 | [Traced patch](traced-patch.md) | tracing a mask and relaxing a clamped patch | `tests/test_trace.py`, `tests/test_clamped.py`, README |
 

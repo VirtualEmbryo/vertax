@@ -272,23 +272,6 @@ See the [documentation](https://html-preview.github.io/?url=https://github.com/V
       print(mode_amplitude(verts, mode))                   # response amplitude (0 at the reference)
   ```
 
-* **Image-based cost** (`cost_dmic`, `make_cost_dmic`, `render_interface_image`). Renders the mesh
-  interfaces as a blurred image and compares it with an observed image, so the outer loss needs no
-  vertex correspondence.
-
-  ```python
-  import jax.numpy as jnp
-  from jax.experimental import enable_x64
-  from vertax import PbcMesh
-  from vertax.cost import make_cost_dmic, render_interface_image
-
-  with enable_x64():
-      mesh = PbcMesh.load_mesh("tests/fixtures/mesh_1008.npz")
-      image = render_interface_image(jnp.asarray(mesh.vertices, jnp.float64), jnp.asarray(mesh.edges),
-                                     float(mesh.width), float(mesh.height), 64, 0.3)
-      loss_outer = make_cost_dmic(sigma_psf=0.3)           # for `loss_function_outer`
-  ```
-
 ### Running the tests
 
 ```sh

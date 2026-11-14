@@ -83,45 +83,6 @@ algorithm. A T1 transition removes one contact and creates another, so the dista
 of it is the number of T1 transitions between the two topologies. It returns a Python `int` and has
 no gradient: it is a measurement, not a cost for `loss_function_outer`.
 
-## Images
-
-Two costs compare the mesh with an image of its junctions, so they need no correspondence of vertices.
-Both are periodic.
-
-[`make_cost_dmic`][vertax.cost.make_cost_dmic]`(sigma_psf, ...)` returns a twelve-argument cost
-$\tfrac12 \lVert M \odot (\hat I - I) \rVert^2$. $\hat I$ is
-[`render_interface_image`][vertax.cost.render_interface_image]: the edges of the mesh drawn as lines
-of uniform density, blurred by a Gaussian of standard deviation `sigma_psf` (in the units of the
-mesh, not in pixels), computed in Fourier space. $I$ is `image_target`, and $M$ an optional mask. By
-default both images are normalized to unit integral, so the cost does not depend on the overall
-brightness. [`cost_dmic`][vertax.cost.cost_dmic] is the same cost with `sigma_psf` as a keyword
-argument whose default is 0.05; the optimizer cannot pass keywords, so use `make_cost_dmic` to set the
-width.
-
-```python
-import math
-
-import jax.numpy as jnp
-
-from vertax import PbcMesh
-from vertax.cost import make_cost_dmic, render_interface_image
-
-side = math.sqrt(20)
-mesh = PbcMesh.from_random_seeds(nb_seeds=20, width=side, height=side, random_key=0)
-image = render_interface_image(mesh.vertices, mesh.edges, side, side, 64, 0.3)
-print(image.shape, float(image.sum() * (side / 64) ** 2))  # integral 1
-
-cost = make_cost_dmic(sigma_psf=0.3)
-print(float(cost(mesh.vertices, mesh.edges, mesh.faces, side, side,
-                 None, None, None, None, None, None, image)))  # 0 at a perfect fit
-```
-
-[`make_cost_mesh2image`][vertax.cost.make_cost_mesh2image]`(sigma_psf)` gives the older image cost
-`cost_mesh2image` in the twelve-argument form. `cost_mesh2image` takes the PSF width as a thirteenth
-argument, and `LEGACY_PSF_SIGMA` is the width with which earlier results were produced.
-
-See the [image cost example](../examples/image-cost.md).
-
 ## Bounded design costs
 
 - [`cost_ratio`][vertax.cost.cost_ratio] measures the elongation of a bounded cluster: the longest

@@ -59,7 +59,7 @@ def perform_bilevel_opt(n_cells: int, n_epochs: int) -> float:  # noqa: C901
     bilevel_optimizer.inner_solver = optax.sgd(learning_rate=0.01)  # inner solver
     bilevel_optimizer.outer_solver = optax.adam(learning_rate=0.0001, nesterov=True)  # outer solver
     bilevel_optimizer.bilevel_optimization_method = BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION
-    # Other parameters are image_target (for cost_mesh2image), beta (for EP).
+    # Another parameter is beta (for EP).
 
     # Initial condition (parameters)
     mu_tensions = 1.2

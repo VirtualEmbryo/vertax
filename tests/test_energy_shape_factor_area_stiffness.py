@@ -8,7 +8,7 @@ and must reduce to `energy_shape_factor_hetero` at `lambda_area = 1`. For the st
 inferred rather than assumed it must also be differentiable, including when it is carried as a
 positive outer parameter `lambda_area = exp(kappa)` and reached only through the inner solve.
 
-`float64` is enabled per-module and scoped, as in `test_dmic.py`.
+`float64` is enabled per-module and scoped.
 """
 from __future__ import annotations
 
