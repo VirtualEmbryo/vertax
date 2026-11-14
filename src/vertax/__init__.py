@@ -80,6 +80,7 @@ from vertax.meshes.mesh import Mesh
 from vertax.meshes.pbc_mesh import PbcMesh
 from vertax.meshes.plot import EdgePlot, FacePlot, VertexPlot, get_plot_mesh, plot_mesh
 from vertax.method_enum import BilevelOptimizationMethod, EPVariant
+from vertax.topo import T1TensionReset
 from vertax.bilevelopt.rheobop import ShearRheologyOptimizer, ShearState
 from vertax.rheology import (
     ShearMode,
@@ -118,6 +119,7 @@ __all__ = [  # noqa: RUF022
     "_BilevelOptimizer",
     "PbcBilevelOptimizer",
     "BoundedBilevelOptimizer",
+    "T1TensionReset",
     "cg_linesearch",
     "gd_linesearch",
     "plot_mesh",

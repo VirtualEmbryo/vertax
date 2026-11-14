@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -360,7 +361,30 @@ def do_not_update_T1(  # noqa: N802
 # ==========
 # Bounded
 # ==========
-@partial(jit, static_argnums=(7, 8))
+@dataclass(frozen=True)
+class T1TensionReset:
+    """Reset the line tension of the edge created by a T1 transition, in a bounded mesh. Off unless passed.
+
+    In a bounded mesh an edge keeps its index, and so its parameter, through a T1: the new junction
+    inherits the tension of the junction it replaces. When the outer optimization has raised that
+    tension enough for the old junction to collapse, the new one collapses too, and the pair flips
+    back and forth, or the junction is held at the T1 length. With this option the new edge starts
+    at the mean tension of the other edges of its own kind (interior edges for a new interior edge,
+    free-interface edges for a new free-interface edge), the same rule as Arzash, Liu & Manning
+    (PNAS 2026) use against flip-back; physically, a new junction carries none of the tension built
+    up on the junction it replaces.
+
+    The mean is taken over the tensions, not over their parameters. ``sigmoid_tensions`` must match
+    the option of the same name of `make_energy_line_tensions_bounded`: with it, the parameters are
+    mapped through ``1 + sigmoid`` before averaging and the mean is mapped back. The reset is a
+    smooth function of the other edges' parameters, so automatic differentiation of a relaxation
+    differentiates through it.
+    """
+
+    sigmoid_tensions: bool = False
+
+
+@partial(jit, static_argnums=(7, 8), static_argnames=("tension_reset",))
 def update_T1_bounded(  # noqa: C901, N802
     vertTable: Array,
     angTable: Array,
@@ -375,9 +399,48 @@ def update_T1_bounded(  # noqa: C901, N802
     selected_hes: Array | None = None,
     selected_faces: Array | None = None,
     perform_energy_check: bool = False,
-) -> tuple[Array, Array, Array, Array]:
-    """Find and apply T1 topological transitions for bounded meshes."""
+    tension_reset: T1TensionReset | None = None,
+) -> tuple[Array, Array, Array, Array] | tuple[Array, Array, Array, Array, Array, Array]:
+    """Find and apply T1 topological transitions for bounded meshes.
+
+    Every edge shorter than ``min_dist_T1`` is either flipped (case B) or, when
+    ``perform_energy_check`` is true and flipping raises the energy, re-stretched about its midpoint
+    without flipping (case A). Both candidates are compared at the moment of the transition, before
+    either is relaxed.
+
+    ``tension_reset`` (off by default) gives the edge created by a T1 the mean line tension of the
+    other edges of its kind, instead of the tension of the edge it replaces (see `T1TensionReset`).
+    The energy check then compares case A at the current tensions with case B at the reset ones,
+    the two states that would actually exist. With the option, the routine returns two more arrays:
+    the edge parameters after every reset, and for each edge the number of transitions accepted in
+    this call (0 or 1). Without it, the return value and every number are those of the routine
+    without the option.
+    """
     num_edges = heTable.shape[0] // 2
+    if tension_reset is not None and jnp.shape(he_params) != (num_edges,):
+        msg = (
+            f"tension_reset needs one parameter per edge: he_params has shape {jnp.shape(he_params)}, "
+            f"the mesh has {num_edges} edges."
+        )
+        raise ValueError(msg)
+
+    def reset_new_edge_tension(he_params_: Array, edge: Array, heTable_new: Array) -> Array:
+        """``he_params_`` with ``edge``, just created by a T1, set to the mean tension of the other edges of its kind."""
+        if tension_reset is None:
+            return he_params_
+        interior = (heTable_new[0::2, 3] != 0) & (heTable_new[1::2, 3] != 0)
+        others = (interior == interior[edge]) & (jnp.arange(num_edges) != edge)
+        n_others = jnp.sum(others)
+        tensions = jax.nn.sigmoid(he_params_) + 1 if tension_reset.sigmoid_tensions else he_params_
+        mean_tension = jnp.sum(jnp.where(others, tensions, 0.0)) / jnp.maximum(n_others, 1)
+        if tension_reset.sigmoid_tensions:
+            # inverse of 1 + sigmoid; the mean of tensions in (1, 2) is in (1, 2)
+            q = jnp.where(n_others > 0, mean_tension - 1, 0.5)
+            new_param = jnp.log(q) - jnp.log1p(-q)
+        else:
+            new_param = mean_tension
+        return he_params_.at[edge].set(jnp.where(n_others > 0, new_param, he_params_[edge]))
+
     angTable = jnp.clip(angTable, ARC_HALF_ANGLE_MIN, ARC_HALF_ANGLE_MAX)
     scale = (min_dist_T1 + 10 ** (-3)) / 2
 
@@ -412,8 +475,9 @@ def update_T1_bounded(  # noqa: C901, N802
             Array,
             Array,
             bool,
+            Array,
         ],
-    ) -> tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """Source vertex and previous edge's source vertex are inside, but the next's source vertex is outside.
 
         The target vertex is outside?
@@ -442,6 +506,7 @@ def update_T1_bounded(  # noqa: C901, N802
             heTable_,
             faceTable_,
             perform_energy_check,
+            he_params_,
         ) = stacked_data
 
         # We make two scenarii: in case A, we just move away the source and target vertices.
@@ -467,7 +532,7 @@ def update_T1_bounded(  # noqa: C901, N802
             selected_hes,
             selected_faces,
             vert_params,
-            he_params,
+            he_params_,
             face_params,
         )
 
@@ -513,6 +578,7 @@ def update_T1_bounded(  # noqa: C901, N802
 
         angTable_ = angTable_.at[idx_twin // 2].set(0.017)
 
+        he_params_B = reset_new_edge_tension(he_params_, idx // 2, heTable_)
         energy_B = L_in(
             vertTable_,
             angTable_,
@@ -522,7 +588,7 @@ def update_T1_bounded(  # noqa: C901, N802
             selected_hes,
             selected_faces,
             vert_params,
-            he_params,
+            he_params_B,
             face_params,
         )
 
@@ -532,7 +598,9 @@ def update_T1_bounded(  # noqa: C901, N802
         angTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), angTable_A, angTable_)
         heTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), heTable_A, heTable_)
         faceTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), faceTable_A, faceTable_)
-        return vertTable_, angTable_, heTable_, faceTable_
+        he_params_ = jnp.where(perform_energy_check & (energy_A < energy_B), he_params_, he_params_B)
+        flipped = jnp.logical_not(perform_energy_check & (energy_A < energy_B))
+        return vertTable_, angTable_, heTable_, faceTable_, he_params_, flipped
 
     # This case may produce a T1 never in contact with the medium (no edge is curved), depending on the energy check
     def standard_t1_fun(
@@ -560,8 +628,9 @@ def update_T1_bounded(  # noqa: C901, N802
             Array,
             Array,
             bool,
+            Array,
         ],
-    ) -> tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """Source vertex, previous and next edge's source vertex are all inside."""
         (
             idx,
@@ -587,6 +656,7 @@ def update_T1_bounded(  # noqa: C901, N802
             heTable_,
             faceTable_,
             perform_energy_check,
+            he_params_,
         ) = stacked_data
 
         # We make two scenarii: in case A, we just move away the source and target vertices.
@@ -612,7 +682,7 @@ def update_T1_bounded(  # noqa: C901, N802
             selected_hes,
             selected_faces,
             vert_params,
-            he_params,
+            he_params_,
             face_params,
         )
 
@@ -658,6 +728,7 @@ def update_T1_bounded(  # noqa: C901, N802
         vertTable_ = vertTable_.at[v_idx_target - 2, 0].set(x2)
         vertTable_ = vertTable_.at[v_idx_target - 2, 1].set(y2)
 
+        he_params_B = reset_new_edge_tension(he_params_, idx // 2, heTable_)
         energy_B = L_in(
             vertTable_,
             angTable_,
@@ -667,7 +738,7 @@ def update_T1_bounded(  # noqa: C901, N802
             selected_hes,
             selected_faces,
             vert_params,
-            he_params,
+            he_params_B,
             face_params,
         )
 
@@ -677,7 +748,9 @@ def update_T1_bounded(  # noqa: C901, N802
         angTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), angTable_A, angTable_)
         heTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), heTable_A, heTable_)
         faceTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), faceTable_A, faceTable_)
-        return vertTable_, angTable_, heTable_, faceTable_
+        he_params_ = jnp.where(perform_energy_check & (energy_A < energy_B), he_params_, he_params_B)
+        flipped = jnp.logical_not(perform_energy_check & (energy_A < energy_B))
+        return vertTable_, angTable_, heTable_, faceTable_, he_params_, flipped
 
     # This case may externalize a cell (moves it to be contact with the medium), depending on the energy check
     # It assumes that out of the 5 edges that define the T1, 2 are curved, but not the one triggering the T1
@@ -710,8 +783,9 @@ def update_T1_bounded(  # noqa: C901, N802
             Array,
             Array,
             bool,
+            Array,
         ],
-    ) -> tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """Source vertex is inside, but previous edge's source vertex is outside."""
         (
             idx,
@@ -737,6 +811,7 @@ def update_T1_bounded(  # noqa: C901, N802
             heTable_,
             faceTable_,
             perform_energy_check,
+            he_params_,
         ) = stacked_data
 
         # We make two scenarii: in case A, we just move away the source and target vertices.
@@ -762,7 +837,7 @@ def update_T1_bounded(  # noqa: C901, N802
             selected_hes,
             selected_faces,
             vert_params,
-            he_params,
+            he_params_,
             face_params,
         )
 
@@ -808,6 +883,7 @@ def update_T1_bounded(  # noqa: C901, N802
 
         angTable_ = angTable_.at[idx // 2].set(0.017)
 
+        he_params_B = reset_new_edge_tension(he_params_, idx // 2, heTable_)
         energy_B = L_in(
             vertTable_,
             angTable_,
@@ -817,7 +893,7 @@ def update_T1_bounded(  # noqa: C901, N802
             selected_hes,
             selected_faces,
             vert_params,
-            he_params,
+            he_params_B,
             face_params,
         )
 
@@ -827,7 +903,9 @@ def update_T1_bounded(  # noqa: C901, N802
         angTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), angTable_A, angTable_)
         heTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), heTable_A, heTable_)
         faceTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), faceTable_A, faceTable_)
-        return vertTable_, angTable_, heTable_, faceTable_
+        he_params_ = jnp.where(perform_energy_check & (energy_A < energy_B), he_params_, he_params_B)
+        flipped = jnp.logical_not(perform_energy_check & (energy_A < energy_B))
+        return vertTable_, angTable_, heTable_, faceTable_, he_params_, flipped
 
     def other_t1_case_fun(
         stacked_data: tuple[
@@ -854,10 +932,11 @@ def update_T1_bounded(  # noqa: C901, N802
             Array,
             Array,
             bool,
+            Array,
         ],
-    ) -> tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """Source vertex is inside, and previous edge's source vertex is inside too."""
-        _, _, _, _, _, _, _, _, _, _, _, _, _, he_next, _, _, _, _, _, _, heTable_, _, _ = stacked_data
+        _, _, _, _, _, _, _, _, _, _, _, _, _, he_next, _, _, _, _, _, _, heTable_, _, _, _ = stacked_data
         # Is the next edge's source vertex (the target vertex ?) also outside ?
         # if neither the triggering, the previous nor the next are curved,
         # then the only possible situation is that all edges
@@ -895,8 +974,9 @@ def update_T1_bounded(  # noqa: C901, N802
             Array,
             Array,
             bool,
+            Array,
         ],
-    ) -> tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """Source vertex is outside. Current edge is curved and will be internalized during the T1."""
         (
             idx,
@@ -922,6 +1002,7 @@ def update_T1_bounded(  # noqa: C901, N802
             heTable_,
             faceTable_,
             perform_energy_check,
+            he_params_,
         ) = stacked_data
 
         # We make two scenarii: in case A, we just move away the source and target vertices.
@@ -947,7 +1028,7 @@ def update_T1_bounded(  # noqa: C901, N802
             selected_hes,
             selected_faces,
             vert_params,
-            he_params,
+            he_params_,
             face_params,
         )
 
@@ -995,6 +1076,7 @@ def update_T1_bounded(  # noqa: C901, N802
 
         angTable_ = angTable_.at[idx // 2].set(1.0)
 
+        he_params_B = reset_new_edge_tension(he_params_, idx // 2, heTable_)
         energy_B = L_in(
             vertTable_,
             angTable_,
@@ -1004,7 +1086,7 @@ def update_T1_bounded(  # noqa: C901, N802
             selected_hes,
             selected_faces,
             vert_params,
-            he_params,
+            he_params_B,
             face_params,
         )
 
@@ -1014,7 +1096,9 @@ def update_T1_bounded(  # noqa: C901, N802
         angTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), angTable_A, angTable_)
         heTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), heTable_A, heTable_)
         faceTable_ = jnp.where(perform_energy_check & (energy_A < energy_B), faceTable_A, faceTable_)
-        return vertTable_, angTable_, heTable_, faceTable_
+        he_params_ = jnp.where(perform_energy_check & (energy_A < energy_B), he_params_, he_params_B)
+        flipped = jnp.logical_not(perform_energy_check & (energy_A < energy_B))
+        return vertTable_, angTable_, heTable_, faceTable_, he_params_, flipped
 
     def not_curved_t1_fun(
         stacked_data: tuple[
@@ -1041,10 +1125,11 @@ def update_T1_bounded(  # noqa: C901, N802
             Array,
             Array,
             bool,
+            Array,
         ],
-    ) -> tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """Current edge is inside."""
-        _, _, _, _, _, _, _, _, _, _, _, _, he_prev, _, _, _, _, _, _, _, heTable_, _, _ = stacked_data
+        _, _, _, _, _, _, _, _, _, _, _, _, he_prev, _, _, _, _, _, _, _, heTable_, _, _, _ = stacked_data
         """But the previous edge's source vertex is outside ?"""
         # if the half-edge previous to the one triggering the T1 is curved, we will do one of the externalizations
         # if instead the next half-edge is curved, we will do the other externalization
@@ -1079,8 +1164,9 @@ def update_T1_bounded(  # noqa: C901, N802
             Array,
             Array,
             bool,
+            Array,
         ],
-    ) -> tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """The two vertices are close, but we can't handle a T1. We move the vertices away from each other."""
         (
             x1,
@@ -1106,6 +1192,7 @@ def update_T1_bounded(  # noqa: C901, N802
             heTable_,
             faceTable_,
             _perform_energy_check,
+            he_params_,
         ) = stacked_data
 
         # scale at larger size than minimal distance
@@ -1119,7 +1206,7 @@ def update_T1_bounded(  # noqa: C901, N802
         vertTable_ = vertTable_.at[v_target - 2, 0].set(sx2)
         vertTable_ = vertTable_.at[v_target - 2, 1].set(sy2)
 
-        return vertTable_, angTable_, heTable_, faceTable_
+        return vertTable_, angTable_, heTable_, faceTable_, he_params_, jnp.array(False)
 
     def find_t1_case_fun(
         stacked_data: tuple[
@@ -1146,8 +1233,9 @@ def update_T1_bounded(  # noqa: C901, N802
             Array,
             Array,
             bool,
+            Array,
         ],
-    ) -> tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """Vertices are close, and we can do a T1."""
         (
             x1,
@@ -1173,6 +1261,7 @@ def update_T1_bounded(  # noqa: C901, N802
             heTable_,
             faceTable_,
             perform_energy_check,
+            he_params_,
         ) = stacked_data
 
         # scale at larger size than minimal distance
@@ -1225,19 +1314,32 @@ def update_T1_bounded(  # noqa: C901, N802
                 heTable_,
                 faceTable_,
                 perform_energy_check,
+                he_params_,
             ),
         )
 
     def below_t1_threshold_fun(
-        stacked_data: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, bool],
-    ) -> tuple[Array, Array, Array, Array]:
+        stacked_data: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, bool, Array],
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """For the current edge, the distance between the source and target vertex is less than min_dist_T1.
 
         Therefore, we might consider a T1 topology change.
         """
-        x1, y1, x2, y2, idx, v_source, v_target, vertTable_, angTable_, heTable_, faceTable_, perform_energy_check = (
-            stacked_data
-        )
+        (
+            x1,
+            y1,
+            x2,
+            y2,
+            idx,
+            v_source,
+            v_target,
+            vertTable_,
+            angTable_,
+            heTable_,
+            faceTable_,
+            perform_energy_check,
+            he_params_,
+        ) = stacked_data
 
         # Middle of the edge
         cx = (x1 + x2) / 2
@@ -1297,22 +1399,25 @@ def update_T1_bounded(  # noqa: C901, N802
                 heTable_,
                 faceTable_,
                 perform_energy_check,
+                he_params_,
             ),
         )
 
     def nothing_to_do_fun(
-        stacked_data: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, bool],
-    ) -> tuple[Array, Array, Array, Array]:
+        stacked_data: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, bool, Array],
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """For the current edge, the distance between the source and target vertex is greater than min_dist_T1.
 
         Therefore, we don't consider a T1 topology change. We do nothing.
         """
-        _, _, _, _, _, _, _, vertTable_, angTable_, heTable_, faceTable_, _perform_energy_check = stacked_data
-        return vertTable_, angTable_, heTable_, faceTable_
+        _, _, _, _, _, _, _, vertTable_, angTable_, heTable_, faceTable_, _perform_energy_check, he_params_ = stacked_data
+        return vertTable_, angTable_, heTable_, faceTable_, he_params_, jnp.array(False)
 
     # loop over all edges, making sure to take only the non-dummy half-edges
-    def body_fun(i: int, stacked_data: tuple[Array, Array, Array, Array]) -> tuple[Array, Array, Array, Array, Array]:
-        vertTable_, angTable_, heTable_, faceTable_ = stacked_data
+    def body_fun(
+        i: int, stacked_data: tuple[Array, Array, Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        vertTable_, angTable_, heTable_, faceTable_, he_params_, flips_ = stacked_data
         # select only non-dummy half-edges, one per edge
         # (if non of the 2 hes are dummy select arbitrarily the first one)
         # dummy half-edges are all zero except for the twin field
@@ -1326,7 +1431,7 @@ def update_T1_bounded(  # noqa: C901, N802
         y1 = vertTable_.at[v_target - 2, 1].get()
         dist = jnp.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2)
         T1_trigger = dist < min_dist_T1
-        return jax.lax.cond(
+        vertTable_, angTable_, heTable_, faceTable_, he_params_, flipped = jax.lax.cond(
             T1_trigger,
             below_t1_threshold_fun,
             nothing_to_do_fun,
@@ -1345,13 +1450,21 @@ def update_T1_bounded(  # noqa: C901, N802
                 heTable_,
                 faceTable_,
                 perform_energy_check,
+                he_params_,
             ),
         )
+        return vertTable_, angTable_, heTable_, faceTable_, he_params_, flips_.at[i].add(flipped.astype(jnp.int32))
 
-    return jax.lax.fori_loop(0, num_edges, body_fun, (vertTable, angTable, heTable, faceTable))
+    flips = jnp.zeros(num_edges, dtype=jnp.int32)
+    vertTable, angTable, heTable, faceTable, he_params, flips = jax.lax.fori_loop(
+        0, num_edges, body_fun, (vertTable, angTable, heTable, faceTable, he_params, flips)
+    )
+    if tension_reset is None:
+        return vertTable, angTable, heTable, faceTable
+    return vertTable, angTable, heTable, faceTable, he_params, flips
 
 
-@partial(jit, static_argnums=(7, 8))
+@partial(jit, static_argnums=(7, 8), static_argnames=("tension_reset",))
 def do_not_update_T1_bounded(  # noqa: N802
     vertTable: Array,
     angTable: Array,
@@ -1366,6 +1479,9 @@ def do_not_update_T1_bounded(  # noqa: N802
     selected_hes: Array | None = None,  # noqa: ARG001
     selected_faces: Array | None = None,  # noqa: ARG001
     perform_energy_check: bool = False,  # noqa: ARG001
-) -> tuple[Array, Array, Array, Array]:
-    """Do nothing function for bounded meshes."""
-    return vertTable, angTable, heTable, faceTable
+    tension_reset: T1TensionReset | None = None,
+) -> tuple[Array, Array, Array, Array] | tuple[Array, Array, Array, Array, Array, Array]:
+    """Do nothing function for bounded meshes; with ``tension_reset``, the same outputs as `update_T1_bounded`."""
+    if tension_reset is None:
+        return vertTable, angTable, heTable, faceTable
+    return vertTable, angTable, heTable, faceTable, he_params, jnp.zeros(heTable.shape[0] // 2, dtype=jnp.int32)

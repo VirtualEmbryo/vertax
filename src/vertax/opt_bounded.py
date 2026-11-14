@@ -3,6 +3,7 @@
 import os
 from collections.abc import Callable
 from functools import partial
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ from scipy.sparse.linalg import LinearOperator, minres
 
 from vertax.method_enum import BilevelOptimizationMethod, EPVariant
 from vertax.opt import _with_incoming_integer_dtypes
-from vertax.topo import ARC_HALF_ANGLE_MAX, ARC_HALF_ANGLE_MIN, update_T1_bounded
+from vertax.topo import ARC_HALF_ANGLE_MAX, ARC_HALF_ANGLE_MIN, T1TensionReset, update_T1_bounded
 
 # Per-step cap on how far a single vertex may move during inner relaxation,
 # expressed as a MULTIPLE of min_dist_T1 rather than as an absolute length.
@@ -61,6 +62,35 @@ UpdateT1FuncBounded = Callable[
     tuple[Array, Array, Array, Array],
 ]
 
+
+class T1Resets(NamedTuple):
+    """What one relaxation with `T1TensionReset` did to the line tensions."""
+
+    he_params: Array
+    """Edge parameters at the end of the relaxation, after every reset."""
+    flips: Array
+    """Number of T1 transitions accepted on each edge during the relaxation (each one reset that edge)."""
+
+
+class T1ResetReport(NamedTuple):
+    """Line-tension resets during one outer step with `T1TensionReset`.
+
+    The outer update is applied to ``he_params``, the parameters after the resets of the estimator's
+    relaxation, so that a junction created by a T1 keeps its reset tension in the design.
+    """
+
+    he_params: Array
+    """Post-reset edge parameters the outer update was applied to."""
+    flips: tuple[Array, ...]
+    """Accepted T1 transitions per edge, one array per relaxation of the estimator (two for EP)."""
+    nudged_mismatch: int
+    """EP only: number of edges whose post-reset parameter differs between the two solves. When it is
+    not 0, each solve's gradient is taken at its own post-reset parameters and the update is applied to
+    those of the free solve (at -beta, or 0 for the one-sided variant), whose state is returned; the two halves of the EP
+    difference then refer to different parameters, so the estimate is not a difference of one map.
+    Always 0 for the other estimators."""
+
+
 LossEPFunction = Callable[
     [
         Array,
@@ -101,7 +131,7 @@ def _cap_vertex_step(step: Array, max_step: float) -> Array:
 ###############################
 
 
-@partial(jit, static_argnums=(7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20))
+@partial(jit, static_argnums=(7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21))
 def _minimize_bounded(  # noqa: C901
     vertTable: Array,
     angTable: Array,
@@ -124,7 +154,11 @@ def _minimize_bounded(  # noqa: C901
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
     reset_solver_on_t1: bool = False,
-) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
+    tension_reset: T1TensionReset | None = None,
+) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, ...]]:
+    if tension_reset is not None and argnums != 0:
+        msg = "tension_reset applies to a relaxation of the vertices and arcs (argnums=0) only."
+        raise ValueError(msg)
     if selected_verts is None:
         selected_verts = jnp.arange(vertTable.shape[0])
     if selected_hes is None:
@@ -194,9 +228,11 @@ def _minimize_bounded(  # noqa: C901
 
     @jit
     def scan_step(  # noqa: C901
-        carry: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, int, Array, Array], i: int
-    ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, int, Array, Array], None]:
-        vt, at, ht, ft, vp, hp, fp, opt_state, prev_L_values, stagnation_count, step_count, should_stop, L_list = carry
+        carry: tuple, i: int
+    ) -> tuple[tuple, None]:
+        vt, at, ht, ft, vp, hp, fp, opt_state, prev_L_values, stagnation_count, step_count, should_stop, L_list = carry[:13]
+        # with tension_reset, the carry also counts the T1 transitions accepted on each edge
+        flips = carry[13] if tension_reset is not None else None
 
         is_running = jnp.logical_not(should_stop)
 
@@ -342,21 +378,43 @@ def _minimize_bounded(  # noqa: C901
 
         # Geometry updates
         ht_before_t1 = ht
-        new_vt_T1, new_at_T1, new_ht_T1, new_ft_T1 = update_T1_func(
-            vt,
-            at,
-            ht,
-            ft,
-            vp,
-            hp,
-            fp,
-            L_in,
-            min_dist_T1,
-            selected_verts,
-            selected_hes,
-            selected_faces,
-            perform_energy_check,
-        )
+        if tension_reset is None:
+            new_vt_T1, new_at_T1, new_ht_T1, new_ft_T1 = update_T1_func(
+                vt,
+                at,
+                ht,
+                ft,
+                vp,
+                hp,
+                fp,
+                L_in,
+                min_dist_T1,
+                selected_verts,
+                selected_hes,
+                selected_faces,
+                perform_energy_check,
+            )
+        else:
+            # The T1 routine also returns the edge parameters, with every edge it created reset to the
+            # mean tension of its kind; they replace the parameters for the rest of the relaxation.
+            new_vt_T1, new_at_T1, new_ht_T1, new_ft_T1, new_hp_T1, new_flips = update_T1_func(
+                vt,
+                at,
+                ht,
+                ft,
+                vp,
+                hp,
+                fp,
+                L_in,
+                min_dist_T1,
+                selected_verts,
+                selected_hes,
+                selected_faces,
+                perform_energy_check,
+                tension_reset=tension_reset,
+            )
+            hp = lax.cond(is_running, lambda: new_hp_T1, lambda: hp)
+            flips = flips + jnp.where(is_running, new_flips, 0)
         vt = lax.cond(is_running, lambda: new_vt_T1, lambda: vt)
         at = lax.cond(is_running, lambda: new_at_T1, lambda: at)
         ht = lax.cond(is_running, lambda: new_ht_T1, lambda: ht)
@@ -380,7 +438,7 @@ def _minimize_bounded(  # noqa: C901
         L_list = L_list.at[i].set(L_current)
         step_count = i + 1
 
-        return (
+        new_carry = (
             vt,
             at,
             ht,
@@ -394,7 +452,10 @@ def _minimize_bounded(  # noqa: C901
             step_count,
             should_stop,
             L_list,
-        ), None
+        )
+        if tension_reset is not None:
+            new_carry = (*new_carry, flips)
+        return new_carry, None
 
     init_carry = (
         vertTable,
@@ -411,13 +472,17 @@ def _minimize_bounded(  # noqa: C901
         should_stop,
         L_in_list,
     )
+    if tension_reset is not None:
+        init_carry = (*init_carry, jnp.zeros(heTable.shape[0] // 2, dtype=jnp.int32))
 
     final_state, _ = lax.scan(scan_step, init_carry, xs=jnp.arange(iterations_max))
 
     # Unpack and return results (for slicing outside JIT)
-    vt_f, at_f, ht_f, ft_f, vp_f, hp_f, fp_f, _, _, _, step_f, _, L_hist = final_state
+    vt_f, at_f, ht_f, ft_f, vp_f, hp_f, fp_f, _, _, _, step_f, _, L_hist = final_state[:13]
 
-    return (vt_f, at_f, ht_f, ft_f, vp_f, hp_f, fp_f), (L_hist, step_f)
+    if tension_reset is None:
+        return (vt_f, at_f, ht_f, ft_f, vp_f, hp_f, fp_f), (L_hist, step_f)
+    return (vt_f, at_f, ht_f, ft_f, vp_f, hp_f, fp_f), (L_hist, step_f, final_state[13])
 
 
 def inner_opt_bounded(
@@ -441,7 +506,8 @@ def inner_opt_bounded(
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
     reset_solver_on_t1: bool = False,
-) -> tuple[tuple[Array, Array, Array, Array], Array]:
+    tension_reset: T1TensionReset | None = None,
+) -> tuple[tuple[Array, Array, Array, Array], Array] | tuple[tuple[Array, Array, Array, Array], Array, T1Resets]:
     """Inner optimization for a bounded mesh.
 
     Use ``cap_vertex_step=True`` with line-search solvers, and ``reset_solver_on_t1=True`` with
@@ -455,9 +521,13 @@ def inner_opt_bounded(
             Off by default, so fixed-step solvers (adam, sgd) are untouched.
         reset_solver_on_t1: Re-initialise the solver state at the new vertex positions and arc
             angles after every iteration whose T1 step changed the topology. Off by default.
+        tension_reset: Give every edge created by a T1 the mean tension of its kind
+            (`T1TensionReset`). Off by default. When set, a third value is returned, a
+            `T1Resets` with the edge parameters after the resets and the transitions
+            accepted on each edge.
     """
     # Use the general minimize function with argnums=0 (optimize vertTable)
-    (vt_f, at_f, ht_f, ft_f, _vp_f, _hp_f, _fp_f), (L_hist_full, step_f_array) = _minimize_bounded(
+    (vt_f, at_f, ht_f, ft_f, _vp_f, hp_f, _fp_f), (L_hist_full, step_f_array, *flips) = _minimize_bounded(
         vertTable,
         angTable,
         heTable,
@@ -479,6 +549,7 @@ def inner_opt_bounded(
         perform_energy_check=perform_energy_check,
         cap_vertex_step=cap_vertex_step,
         reset_solver_on_t1=reset_solver_on_t1,
+        tension_reset=tension_reset,
     )
 
     # Convert the JAX array step_f to a Python integer
@@ -486,7 +557,9 @@ def inner_opt_bounded(
     # Now slice using standard Python/NumPy slicing
     final_L_list = L_hist_full[:step_f]
     # Return updated arrays and loss history
-    return (vt_f, at_f, ht_f, ft_f), final_L_list
+    if tension_reset is None:
+        return (vt_f, at_f, ht_f, ft_f), final_L_list
+    return (vt_f, at_f, ht_f, ft_f), final_L_list, T1Resets(hp_f, flips[0])
 
 
 def _sq_dist(p: Array, q: Array) -> Array:
@@ -601,11 +674,16 @@ def cost_ad_bounded(
     image_target: Array | None = None,
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     cap_vertex_step: bool = False,
-) -> tuple[Array, tuple[Array, Array, Array, Array]]:
-    """Automatic differentiation cost function."""
+    tension_reset: T1TensionReset | None = None,
+) -> tuple[Array, tuple[Array, Array, Array, Array]] | tuple[Array, tuple[Array, Array, Array, Array, T1Resets]]:
+    """Automatic differentiation cost function.
+
+    With ``tension_reset``, the relaxation resets the tension of every edge a T1 creates, and the
+    derivative is taken through those resets; the auxiliary output also holds the `T1Resets`.
+    """
     # heTable_before = heTable
 
-    (vertTable, angTable, heTable, faceTable), _ = inner_opt_bounded(
+    (vertTable, angTable, heTable, faceTable), _, *resets = inner_opt_bounded(
         vertTable,
         angTable,
         heTable,
@@ -624,6 +702,7 @@ def cost_ad_bounded(
         selected_faces,
         update_T1_func,
         cap_vertex_step=cap_vertex_step,
+        tension_reset=tension_reset,
     )
 
     # perm = _build_t1_repair_perm(
@@ -649,7 +728,9 @@ def cost_ad_bounded(
         image_target,
     )
 
-    return loss_out_value, (vertTable, angTable, heTable, faceTable)
+    if tension_reset is None:
+        return loss_out_value, (vertTable, angTable, heTable, faceTable)
+    return loss_out_value, (vertTable, angTable, heTable, faceTable, resets[0])
 
 
 def outer_opt_bounded(
@@ -679,13 +760,19 @@ def outer_opt_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     params_regularizer: Callable | None = None,
     cap_vertex_step: bool = False,
-) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    tension_reset: T1TensionReset | None = None,
+) -> (
+    tuple[Array, Array, Array, Array, Array, Array, Array]
+    | tuple[Array, Array, Array, Array, Array, Array, Array, T1ResetReport]
+):
     """Outer optimization for a bounded mesh.
 
     Returns the tables (vertices, angles, edges, faces) of the inner equilibrium and the updated
-    parameters.
+    parameters. With ``tension_reset``, the gradient is the derivative through the relaxation and its
+    resets, the update is applied to the post-reset parameters, and a `T1ResetReport` is returned as an
+    eighth value.
     """
-    ((_, (vertTable, angTable, heTable, faceTable)), (grad_verts, grad_hes, grad_faces)) = value_and_grad(
+    ((_, aux), (grad_verts, grad_hes, grad_faces)) = value_and_grad(
         cost_ad_bounded, argnums=(4, 5, 6), has_aux=True
     )(
         vertTable,
@@ -712,7 +799,12 @@ def outer_opt_bounded(
         image_target,
         update_T1_func,
         cap_vertex_step=cap_vertex_step,
+        tension_reset=tension_reset,
     )
+    vertTable, angTable, heTable, faceTable = aux[:4]
+    if tension_reset is not None:
+        he_params = aux[4].he_params
+        report = T1ResetReport(he_params, (aux[4].flips,), 0)
 
     grad_verts, grad_hes, grad_faces = _add_params_regularizer_grads(
         grad_verts, grad_hes, grad_faces, params_regularizer, vert_params, he_params, face_params
@@ -726,7 +818,9 @@ def outer_opt_bounded(
     he_params = updated_params["he_params"]  # type: ignore
     face_params = updated_params["face_params"]  # type: ignore
 
-    return vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params
+    if tension_reset is None:
+        return vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params
+    return vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params, report
 
 
 #############################
@@ -785,7 +879,7 @@ def _loss_ep_static_bounded(
     return loss_inner_value + (beta * loss_outer_value)
 
 
-@partial(jit, static_argnums=(7, 12, 13, 14, 15, 16, 17, 18, 23, 24, 25, 26, 27))
+@partial(jit, static_argnums=(7, 12, 13, 14, 15, 16, 17, 18, 23, 24, 25, 26, 27, 28))
 def _minimize_ep_bounded(
     vertTable: Array,
     angTable: Array,
@@ -815,7 +909,8 @@ def _minimize_ep_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
-) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, Array]]:
+    tension_reset: T1TensionReset | None = None,
+) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], tuple[Array, ...]]:
     def loss_evaluated(
         vt: Array,
         at: Array,
@@ -870,6 +965,7 @@ def _minimize_ep_bounded(
         update_T1_func,
         perform_energy_check=perform_energy_check,
         cap_vertex_step=cap_vertex_step,
+        tension_reset=tension_reset,
     )
 
 
@@ -901,9 +997,13 @@ def inner_eq_prop_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     perform_energy_check: bool = False,
     cap_vertex_step: bool = False,
-) -> tuple[tuple[Array, Array, Array, Array], Array]:
-    """Inner optimization function for equilibrium propagation only and bounded meshes."""
-    (vt_f, at_f, ht_f, ft_f, _vp_f, _hp_f, _fp_f), (L_hist_full, step_f_array) = _minimize_ep_bounded(
+    tension_reset: T1TensionReset | None = None,
+) -> tuple[tuple[Array, Array, Array, Array], Array] | tuple[tuple[Array, Array, Array, Array], Array, T1Resets]:
+    """Inner optimization function for equilibrium propagation only and bounded meshes.
+
+    With ``tension_reset``, a third value is returned, as for `inner_opt_bounded`.
+    """
+    (vt_f, at_f, ht_f, ft_f, _vp_f, hp_f, _fp_f), (L_hist_full, step_f_array, *flips) = _minimize_ep_bounded(
         vertTable,
         angTable,
         heTable,
@@ -932,11 +1032,14 @@ def inner_eq_prop_bounded(
         update_T1_func=update_T1_func,
         perform_energy_check=perform_energy_check,
         cap_vertex_step=cap_vertex_step,
+        tension_reset=tension_reset,
     )
 
     step_f = step_f_array.item()
     final_L_list = L_hist_full[:step_f]
-    return (vt_f, at_f, ht_f, ft_f), final_L_list
+    if tension_reset is None:
+        return (vt_f, at_f, ht_f, ft_f), final_L_list
+    return (vt_f, at_f, ht_f, ft_f), final_L_list, T1Resets(hp_f, flips[0])
 
 
 def outer_eq_prop_bounded(
@@ -968,7 +1071,11 @@ def outer_eq_prop_bounded(
     params_regularizer: Callable | None = None,
     ep_variant: EPVariant = EPVariant.CENTERED,
     cap_vertex_step: bool = False,
-) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    tension_reset: T1TensionReset | None = None,
+) -> (
+    tuple[Array, Array, Array, Array, Array, Array, Array]
+    | tuple[Array, Array, Array, Array, Array, Array, Array, T1ResetReport]
+):
     """Outer optimization for equilibrium propagation.
 
     `ep_variant` selects the estimator, as in the periodic `vertax.opt._compute_ep_grads`: CENTERED
@@ -976,6 +1083,13 @@ def outer_eq_prop_bounded(
     `+beta` and divides by `beta`. The returned tables are those of the free solve.
     `params_regularizer(vert_params, he_params, face_params) -> scalar`, if given, has its gradient
     added to the EP gradient before the outer solver's update.
+
+    With ``tension_reset``, each of the two solves resets the tension of the edges its T1 transitions
+    create, and each half of the EP difference is evaluated at its own solve's post-reset parameters.
+    When the two solves end with the same parameters this is the EP estimate at those parameters; when
+    they do not (a T1 in one solve and not in the other), the mismatch is counted in the returned
+    `T1ResetReport` (eighth value) rather than mixed in silently. The update is applied to the
+    post-reset parameters of the free solve, whose state is returned.
 
     Returns the tables (vertices, angles, edges, faces) of the free solve and the updated parameters.
     """
@@ -988,7 +1102,7 @@ def outer_eq_prop_bounded(
         denominator = beta
     # heTable_before = heTable
 
-    (vertTable_free, angTable_free, heTable_free, faceTable_free), _loss_free = inner_eq_prop_bounded(
+    (vertTable_free, angTable_free, heTable_free, faceTable_free), _loss_free, *resets_free = inner_eq_prop_bounded(
         vertTable,
         angTable,
         heTable,
@@ -1015,6 +1129,7 @@ def outer_eq_prop_bounded(
         beta=beta_free,
         update_T1_func=update_T1_func,
         cap_vertex_step=cap_vertex_step,
+        tension_reset=tension_reset,
     )
 
     # perm_free = _build_t1_repair_perm(
@@ -1025,7 +1140,7 @@ def outer_eq_prop_bounded(
     # )
     # vertTable_free, heTable_free = _apply_perm_to_state(perm_free, vertTable_free, heTable_free)
 
-    (vertTable_nudged, angTable_nudged, heTable_nudged, faceTable_nudged), _loss_nudged = inner_eq_prop_bounded(
+    (vertTable_nudged, angTable_nudged, heTable_nudged, faceTable_nudged), _loss_nudged, *resets_nudged = inner_eq_prop_bounded(
         vertTable,
         angTable,
         heTable,
@@ -1052,7 +1167,18 @@ def outer_eq_prop_bounded(
         beta,
         update_T1_func,
         cap_vertex_step=cap_vertex_step,
+        tension_reset=tension_reset,
     )
+
+    he_params_free = he_params_nudged = he_params
+    if tension_reset is not None:
+        he_params_free, he_params_nudged = resets_free[0].he_params, resets_nudged[0].he_params
+        report = T1ResetReport(
+            he_params_free,
+            (resets_free[0].flips, resets_nudged[0].flips),
+            int(jnp.sum(he_params_free != he_params_nudged)),
+        )
+        he_params = he_params_free
 
     # perm_nudged = _build_t1_repair_perm(
     #     vertTable_nudged,
@@ -1070,7 +1196,7 @@ def outer_eq_prop_bounded(
         heTable_free,
         faceTable_free,
         vert_params,
-        he_params,
+        he_params_free,
         face_params,
         vertTable_target,
         angTable_target,
@@ -1091,7 +1217,7 @@ def outer_eq_prop_bounded(
         heTable_nudged,
         faceTable_nudged,
         vert_params,
-        he_params,
+        he_params_nudged,
         face_params,
         vertTable_target,
         angTable_target,
@@ -1122,7 +1248,9 @@ def outer_eq_prop_bounded(
     he_params = updated_params["he_params"]  # type: ignore
     face_params = updated_params["face_params"]  # type: ignore
 
-    return vertTable_free, angTable_free, heTable_free, faceTable_free, vert_params, he_params, face_params
+    if tension_reset is None:
+        return vertTable_free, angTable_free, heTable_free, faceTable_free, vert_params, he_params, face_params
+    return vertTable_free, angTable_free, heTable_free, faceTable_free, vert_params, he_params, face_params, report
 
 
 ###########################
@@ -1157,11 +1285,16 @@ def outer_implicit_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     params_regularizer: Callable | None = None,
     cap_vertex_step: bool = False,
-) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    tension_reset: T1TensionReset | None = None,
+) -> (
+    tuple[Array, Array, Array, Array, Array, Array, Array]
+    | tuple[Array, Array, Array, Array, Array, Array, Array, T1ResetReport]
+):
     """Outer optimization for implicit differentiation method.
 
     Returns the tables (vertices, angles, edges, faces) of the inner equilibrium and the updated
-    parameters.
+    parameters. With ``tension_reset``, the derivatives are taken at the post-reset parameters of the
+    relaxation, the update is applied to them, and a `T1ResetReport` is returned as an eighth value.
     """
 
     def L_in_flatten(  # noqa: N802
@@ -1191,7 +1324,7 @@ def outer_implicit_bounded(
 
     # heTable_before = heTable
 
-    (vertTable_eq, angTable_eq, heTable_eq, faceTable_eq), _L_in_value = inner_opt_bounded(
+    (vertTable_eq, angTable_eq, heTable_eq, faceTable_eq), _L_in_value, *resets = inner_opt_bounded(
         vertTable,
         angTable,
         heTable,
@@ -1210,7 +1343,12 @@ def outer_implicit_bounded(
         selected_faces,
         update_T1_func,
         cap_vertex_step=cap_vertex_step,
+        tension_reset=tension_reset,
     )
+    if tension_reset is not None:
+        # every derivative below is taken at the equilibrium with the post-reset parameters
+        he_params = resets[0].he_params
+        report = T1ResetReport(he_params, (resets[0].flips,), 0)
 
     # perm = _build_t1_repair_perm(
     #     vertTable_eq,
@@ -1361,7 +1499,9 @@ def outer_implicit_bounded(
     he_params = updated_params["he_params"]  # type: ignore
     face_params = updated_params["face_params"]  # type: ignore
 
-    return vertTable_eq, angTable_eq, heTable_eq, faceTable_eq, vert_params, he_params, face_params
+    if tension_reset is None:
+        return vertTable_eq, angTable_eq, heTable_eq, faceTable_eq, vert_params, he_params, face_params
+    return vertTable_eq, angTable_eq, heTable_eq, faceTable_eq, vert_params, he_params, face_params, report
 
 
 ##########################
@@ -1396,11 +1536,18 @@ def outer_adjoint_state_bounded(
     update_T1_func: UpdateT1FuncBounded = update_T1_bounded,
     params_regularizer: Callable | None = None,
     cap_vertex_step: bool = False,
-) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    tension_reset: T1TensionReset | None = None,
+) -> (
+    tuple[Array, Array, Array, Array, Array, Array, Array]
+    | tuple[Array, Array, Array, Array, Array, Array, Array, T1ResetReport]
+):
     """Outer optimization for adjoint state method.
 
     Returns the tables (vertices, angles, edges, faces) it was given, unchanged, and the updated
-    parameters.
+    parameters. With ``tension_reset``, the derivatives are taken at the post-reset parameters of the
+    relaxation, the update is applied to them, the relaxed tables are returned instead (the post-reset
+    parameters belong to the topology the relaxation reached), and a `T1ResetReport` is returned as an
+    eighth value.
     """
 
     def L_in_flatten(  # noqa: N802
@@ -1430,7 +1577,7 @@ def outer_adjoint_state_bounded(
 
     # heTable_before = heTable
 
-    (vertTable_eq, angTable_eq, heTable_eq, faceTable_eq), _L_in_value = inner_opt_bounded(
+    (vertTable_eq, angTable_eq, heTable_eq, faceTable_eq), _L_in_value, *resets = inner_opt_bounded(
         vertTable,
         angTable,
         heTable,
@@ -1449,7 +1596,12 @@ def outer_adjoint_state_bounded(
         selected_faces,
         update_T1_func,
         cap_vertex_step=cap_vertex_step,
+        tension_reset=tension_reset,
     )
+    if tension_reset is not None:
+        # every derivative below is taken at the equilibrium with the post-reset parameters
+        he_params = resets[0].he_params
+        report = T1ResetReport(he_params, (resets[0].flips,), 0)
 
     # jax.debug.print("vertTableAfter={x}", x=vertTable_eq, ordered=True)
     # perm = _build_t1_repair_perm(
@@ -1548,7 +1700,11 @@ def outer_adjoint_state_bounded(
     he_params = updated_params["he_params"]  # type: ignore
     face_params = updated_params["face_params"]  # type: ignore
 
-    return vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params
+    if tension_reset is None:
+        return vertTable, angTable, heTable, faceTable, vert_params, he_params, face_params
+    # The post-reset parameters belong to the topology the relaxation reached, so with resets the
+    # relaxed state is returned, as the other estimators do, rather than the starting state.
+    return vertTable_eq, angTable_eq, heTable_eq, faceTable_eq, vert_params, he_params, face_params, report
 
 
 #############

@@ -8,13 +8,14 @@ from vertax.meshes.bounded_mesh import BoundedMesh
 from vertax.meshes.mesh import Mesh
 from vertax.opt_bounded import (
     BilevelOptimizationMethod,
+    T1ResetReport,
     inner_opt_bounded,
     outer_adjoint_state_bounded,
     outer_eq_prop_bounded,
     outer_implicit_bounded,
     outer_opt_bounded,
 )
-from vertax.topo import do_not_update_T1_bounded, update_T1_bounded
+from vertax.topo import T1TensionReset, do_not_update_T1_bounded, update_T1_bounded
 
 __all__ = ["BoundedBilevelOptimizer"]
 
@@ -31,6 +32,16 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
         self._inner_opt_func = self._inner_opt
         self._outer_opt_func = self._outer_opt
         self.angles_target = jnp.array([])
+        self.t1_tension_reset: T1TensionReset | None = None
+        """Reset the line tension of every edge a T1 creates to the mean tension of its kind, in every
+        relaxation (inner optimization and the estimators' own). Off (None) by default; see
+        `T1TensionReset`. With it, `inner_optimization` stores the post-reset parameters in the mesh,
+        and `outer_optimization` applies its update to the post-reset parameters of the estimator's
+        relaxation."""
+        self.last_t1_resets: T1ResetReport | None = None
+        """With `t1_tension_reset`, what the last inner or outer optimization did to the tensions: the
+        post-reset parameters, the transitions accepted on each edge in each relaxation, and, for EP,
+        the number of edges on which its two solves disagree. None without the option."""
 
     def _set_update_T1_func(self, b: bool) -> None:  # noqa: N802
         """Set the _update_T1_func callable with respect to whether it is needed or not.
@@ -133,7 +144,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
             msg = "The update T1 method was not set by a boolean."
             raise AttributeError(msg)
         else:
-            (mesh.vertices, mesh.angles, mesh.edges, mesh.faces), loss_history = inner_opt_bounded(
+            (mesh.vertices, mesh.angles, mesh.edges, mesh.faces), loss_history, *resets = inner_opt_bounded(
                 vertTable=mesh.vertices,
                 angTable=mesh.angles,
                 heTable=mesh.edges,
@@ -153,7 +164,11 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                 update_T1_func=self._update_T1_func,
                 perform_energy_check=perform_energy_check,
                 cap_vertex_step=self._resolve_cap_vertex_step(),
+                tension_reset=self.t1_tension_reset,
             )
+            if self.t1_tension_reset is not None:
+                mesh.edges_params = resets[0].he_params
+                self.last_t1_resets = T1ResetReport(resets[0].he_params, (resets[0].flips,), 0)
         return list(loss_history)
 
     def _outer_opt(
@@ -179,15 +194,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
         else:
             match self.bilevel_optimization_method:
                 case BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION:
-                    (
-                        mesh.vertices,
-                        mesh.angles,
-                        mesh.edges,
-                        mesh.faces,
-                        mesh.vertices_params,
-                        mesh.edges_params,
-                        mesh.faces_params,
-                    ) = outer_opt_bounded(
+                    result = outer_opt_bounded(
                         mesh.vertices,
                         mesh.angles,
                         mesh.edges,
@@ -214,6 +221,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         self._update_T1_func,
                         self.params_regularizer,
                         cap_vertex_step=self._resolve_cap_vertex_step(),
+                        tension_reset=self.t1_tension_reset,
                     )
 
                 case BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION:
@@ -225,15 +233,7 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                             "PbcBilevelOptimizer threads the outer optimizer state across epochs)."
                         )
                         raise ValueError(msg)
-                    (
-                        mesh.vertices,
-                        mesh.angles,
-                        mesh.edges,
-                        mesh.faces,
-                        mesh.vertices_params,
-                        mesh.edges_params,
-                        mesh.faces_params,
-                    ) = outer_eq_prop_bounded(
+                    result = outer_eq_prop_bounded(
                         mesh.vertices,
                         mesh.angles,
                         mesh.edges,
@@ -262,18 +262,11 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         self.params_regularizer,
                         self.ep_variant,
                         cap_vertex_step=self._resolve_cap_vertex_step(),
+                        tension_reset=self.t1_tension_reset,
                     )
 
                 case BilevelOptimizationMethod.IMPLICIT_DIFFERENTIATION:
-                    (
-                        mesh.vertices,
-                        mesh.angles,
-                        mesh.edges,
-                        mesh.faces,
-                        mesh.vertices_params,
-                        mesh.edges_params,
-                        mesh.faces_params,
-                    ) = outer_implicit_bounded(
+                    result = outer_implicit_bounded(
                         mesh.vertices,
                         mesh.angles,
                         mesh.edges,
@@ -300,17 +293,10 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         self._update_T1_func,
                         self.params_regularizer,
                         cap_vertex_step=self._resolve_cap_vertex_step(),
+                        tension_reset=self.t1_tension_reset,
                     )
                 case BilevelOptimizationMethod.ADJOINT_STATE:
-                    (
-                        mesh.vertices,
-                        mesh.angles,
-                        mesh.edges,
-                        mesh.faces,
-                        mesh.vertices_params,
-                        mesh.edges_params,
-                        mesh.faces_params,
-                    ) = outer_adjoint_state_bounded(
+                    result = outer_adjoint_state_bounded(
                         mesh.vertices,
                         mesh.angles,
                         mesh.edges,
@@ -337,8 +323,20 @@ class BoundedBilevelOptimizer(_BilevelOptimizer):
                         self._update_T1_func,
                         self.params_regularizer,
                         cap_vertex_step=self._resolve_cap_vertex_step(),
+                        tension_reset=self.t1_tension_reset,
                     )
                 case _:
                     msg = f"Method not recognized. Must be a BilevelOptimizationMethod. \
                         Got {self.bilevel_optimization_method}."
                     raise AttributeError(msg)
+            (
+                mesh.vertices,
+                mesh.angles,
+                mesh.edges,
+                mesh.faces,
+                mesh.vertices_params,
+                mesh.edges_params,
+                mesh.faces_params,
+            ) = result[:7]
+            if self.t1_tension_reset is not None:
+                self.last_t1_resets = result[7]
