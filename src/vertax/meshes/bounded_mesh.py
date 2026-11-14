@@ -97,13 +97,12 @@ class BoundedMesh(Mesh):
 
     `angles` is a 1D array of floats of size (nb_angles), with the angles sustaining the arcs of the free interfaces ;
     between 0 and PI / 2.
-
     Every face is traversed counterclockwise (`from_seeds` orders it so, and T1 transitions keep it),
     and the arc of a free interface bulges to the right of the directed chord of its half-edge, away
-    from the cell. Cell areas (`vertax.geo`) rely on this orientation and do not read it from the
-    sign of a cell's chord polygon, which turns over when the cell's interior vertices cross the
-    chord of its arc while the cell keeps its side. A mesh built outside VertAX must therefore list
-    its faces counterclockwise; `load_mesh` and `load_mesh_txt` refuse a clockwise mesh.
+    from the cell. Cell areas and cluster moments (`vertax.geo`) rely on this orientation and do not
+    read it from the sign of a cell's chord polygon, which turns over when the cell's interior
+    vertices cross the chord of its arc while the cell keeps its side. A mesh built outside VertAX must
+    therefore list its faces counterclockwise; `load_mesh` and `load_mesh_txt` refuse a clockwise mesh.
 
     The floats of `vertices` and `angles` use JAX's default float dtype: `float32`, or `float64` when
     `jax_enable_x64` is enabled before the mesh is built.

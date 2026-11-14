@@ -65,6 +65,8 @@ from vertax.cost import (
     cost_mesh2image,
     make_cost_mesh2image,
     cost_ratio,
+    make_cost_aspect_ratio,
+    make_cost_aspect_ratio_along_x,
     cost_v2v,
     cost_dmic,
 )
@@ -135,6 +137,8 @@ __all__ = [  # noqa: RUF022
     "topological_distance",
     "cost_dmic",
     "cost_ratio",
+    "make_cost_aspect_ratio",
+    "make_cost_aspect_ratio_along_x",
     "cost_checkerboard",
     "energy_shape_factor_hetero",
     "energy_shape_factor_homo",

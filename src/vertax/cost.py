@@ -46,6 +46,7 @@ You can create a function with this signature exactly that uses also locally-acc
 """
 
 import math
+from collections.abc import Callable
 from functools import partial
 
 import jax
@@ -61,7 +62,7 @@ from numpy.typing import NDArray
 from scipy.optimize import linear_sum_assignment
 
 from vertax.energy import MAX_EDGES_IN_ANY_FACE
-from vertax.geo import get_area, min_image_sq_dist
+from vertax.geo import get_area, get_cluster_moments_bounded, min_image_sq_dist
 
 TARGET_RATIO = 2.0
 
@@ -438,6 +439,94 @@ def cost_ratio(
     # Numerically stabilize division
     ratio = long_axis / (short_axis + 1e-12)
     return (ratio - TARGET_RATIO) ** 2
+
+
+def aspect_ratio_along_x(vertTable: Array, angTable: Array, heTable: Array) -> Array:
+    r"""Aspect ratio of a bounded cluster along the fixed x axis, $r_x=\sqrt{S_{xx}/S_{yy}}$.
+
+    $S_{xx}$ and $S_{yy}$ are the central second moments of the region the cluster
+    covers, cells and circular caps of the free interface included
+    (`vertax.geo.get_cluster_moments_bounded`). For an ellipse of semi-axes ``a`` along x and ``b``
+    along y, $r_x=a/b$. The axis is fixed: the same ellipse turned by an angle $\phi$
+    has $r_x^2=(a^2\cos^2\phi+b^2\sin^2\phi)/(a^2\sin^2\phi+b^2\cos^2\phi)$, which is
+    largest at $\phi=0$, so elongating the cluster along any other direction gives a smaller
+    $r_x$. Smooth in the vertex positions and arc angles.
+    """
+    _, _, s = get_cluster_moments_bounded(vertTable, angTable, heTable)
+    return jnp.sqrt(s[0, 0] / s[1, 1])
+
+
+def aspect_ratio_principal(vertTable: Array, angTable: Array, heTable: Array) -> Array:
+    r"""Aspect ratio of a bounded cluster along its own principal axes, $\sqrt{\lambda_1/\lambda_2}$.
+
+    $\lambda_1\ge\lambda_2$ are the eigenvalues of the central second-moment matrix of the
+    region the cluster covers (`vertax.geo.get_cluster_moments_bounded`), so the value does not
+    depend on the orientation of the cluster, and the direction of elongation is left free. For an
+    ellipse of semi-axes ``a >= b`` it is ``a/b`` at any orientation. Smooth except at an exactly
+    isotropic cluster, where the two eigenvalues cross; a term of relative size 1e-12 under the
+    square root keeps the gradient finite there.
+    """
+    _, _, s = get_cluster_moments_bounded(vertTable, angTable, heTable)
+    trace = s[0, 0] + s[1, 1]
+    split = jnp.sqrt((s[0, 0] - s[1, 1]) ** 2 + 4 * s[0, 1] ** 2 + (1e-12 * trace) ** 2)
+    return jnp.sqrt((trace + split) / (trace - split))
+
+
+def make_cost_aspect_ratio_along_x(target_ratio: float) -> Callable:
+    r"""Outer cost $\mathcal C=(r_x-r_\mathrm{target})^2$ for a `BoundedMesh`, with the axis of elongation fixed to x.
+
+    ``r_x`` is `aspect_ratio_along_x`. Use this cost when the direction of elongation is part of the
+    design; with `make_cost_aspect_ratio` the direction is free and can drift during the design.
+    The returned function has the bounded outer-cost signature.
+    """
+    target = float(target_ratio)
+
+    def cost_aspect_ratio_along_x(
+        vertTable: Array,
+        angTable: Array,
+        heTable: Array,
+        _faceTable: Array | None = None,
+        _vertTable_target: Array | None = None,
+        _angTable_target: Array | None = None,
+        _heTable_target: Array | None = None,
+        _faceTable_target: Array | None = None,
+        _selected_verts: Array | None = None,
+        _selected_hes: Array | None = None,
+        _selected_faces: Array | None = None,
+        _image_target: Array | None = None,
+    ) -> Array:
+        return (aspect_ratio_along_x(vertTable, angTable, heTable) - target) ** 2
+
+    return cost_aspect_ratio_along_x
+
+
+def make_cost_aspect_ratio(target_ratio: float) -> Callable:
+    r"""Outer cost $\mathcal C=(r-r_\mathrm{target})^2$ for a `BoundedMesh`, invariant to rotation.
+
+    ``r`` is `aspect_ratio_principal`, so the cluster may elongate along any direction. Unlike
+    `cost_ratio`, which measures the largest vertex distance and changes non-smoothly when the
+    farthest pair of vertices changes, this cost is smooth. The returned function has the bounded
+    outer-cost signature.
+    """
+    target = float(target_ratio)
+
+    def cost_aspect_ratio(
+        vertTable: Array,
+        angTable: Array,
+        heTable: Array,
+        _faceTable: Array | None = None,
+        _vertTable_target: Array | None = None,
+        _angTable_target: Array | None = None,
+        _heTable_target: Array | None = None,
+        _faceTable_target: Array | None = None,
+        _selected_verts: Array | None = None,
+        _selected_hes: Array | None = None,
+        _selected_faces: Array | None = None,
+        _image_target: Array | None = None,
+    ) -> Array:
+        return (aspect_ratio_principal(vertTable, angTable, heTable) - target) ** 2
+
+    return cost_aspect_ratio
 
 
 @jit

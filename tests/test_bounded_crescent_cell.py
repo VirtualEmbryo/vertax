@@ -1,4 +1,4 @@
-"""A free-interface cell whose chord polygon has turned over: area and energy gradient.
+"""A free-interface cell whose chord polygon has turned over: area, cluster moments and energy gradient.
 
 The cell of a bounded mesh is its chord polygon (the polygon of its vertices) plus a circular cap on
 every free-interface edge, bulging away from the cell. Faces are traversed counterclockwise, so a
@@ -19,9 +19,12 @@ The fixture is a two-cell cluster with closed-form geometry::
 
 * area of X: ``cap(C, A, alpha) - triangle(A, B, C)``;
 * area of Y: ``polygon(A, D, C, B) + cap(A, D, beta) + cap(D, C, beta)``;
+* the cluster X u Y is the cap over C -> A, the triangle A D C and the two lower caps, whatever B,
+  so its moments are those of these four pieces.
 
-The energy gradient is compared with central finite differences of the closed-form energy, not of
-the library's. Each case
+The cap moments are the circular sector minus the triangle it spans with the circle's centre, in
+closed form; the library computes them by Gauss-Legendre quadrature. The energy gradient is
+compared with central finite differences of the closed-form energy, not of the library's. Each case
 is checked on the configuration and on its mirror image (relabelled so that the faces stay
 counterclockwise), turned and shifted, and from two different starting half-edges.
 
@@ -41,7 +44,7 @@ from jax.experimental import enable_x64
 
 from vertax import BoundedBilevelOptimizer, BoundedMesh
 from vertax.energy import make_energy_line_tensions_bounded
-from vertax.geo import get_area_bounded
+from vertax.geo import get_area_bounded, get_cluster_moments_bounded
 
 K_AREAS = 40.0
 TARGET_AREA = 0.6
@@ -93,25 +96,71 @@ def _cross(p, q) -> float:
     return float(p[0] * q[1] - p[1] * q[0])
 
 
-def _polygon_area(pts) -> float:
-    """Signed area of a polygon, counterclockwise positive."""
-    return 0.5 * sum(_cross(p, q) for p, q in zip(pts, np.roll(pts, -1, axis=0)))
+def _polygon_moments(pts) -> tuple[float, np.ndarray, np.ndarray]:
+    """Signed area, first and second moments about the origin of a polygon, counterclockwise positive."""
+    area, first, second = 0.0, np.zeros(2), np.zeros((2, 2))
+    for p, q in zip(pts, np.roll(pts, -1, axis=0)):
+        # triangle (origin, p, q): area A, first moment A (p + q) / 3, second (A / 12)(p p' + q q' + s s'), s = p + q
+        a = 0.5 * _cross(p, q)
+        s = p + q
+        area += a
+        first += a * s / 3
+        second += a / 12 * (np.outer(p, p) + np.outer(q, q) + np.outer(s, s))
+    return area, first, second
 
 
-def _cap_area(p0, p1, alpha) -> float:
-    """Area of the circular cap of half-angle alpha over the chord p0 -> p1."""
+def _cap_moments(p0, p1, alpha) -> tuple[float, np.ndarray, np.ndarray]:
+    """Area, first and second moments about the origin of the circular cap right of the chord p0 -> p1.
+
+    In the chord frame (origin at the chord's midpoint m, u along the outward normal n, w along the
+    chord t) the circle's centre is at u = -R cos(alpha). About the centre, the cap is the sector of
+    half-angle alpha minus the triangle it spans with the centre:
+    sector: area alpha R^2, int u' = (2/3) R^3 sin(alpha), int u'^2 = R^4 (2 alpha + sin 2alpha) / 8,
+    int w^2 = R^4 (2 alpha - sin 2alpha) / 8; triangle: area R^2 sin cos, int u' = (2/3) R cos * area,
+    int u'^2 = R^2 cos^2 area / 2, int w^2 = R^2 sin^2 area / 6.
+    """
+    d = p1 - p0
+    chord = np.linalg.norm(d)
+    t = d / chord
+    n = np.array([t[1], -t[0]])
+    m = 0.5 * (p0 + p1)
     s, c = np.sin(alpha), np.cos(alpha)
-    return float(np.linalg.norm(p1 - p0) ** 2 * (alpha - s * c) / (4 * s**2))
+    r = chord / (2 * s)
+    tri = r**2 * s * c
+    area = alpha * r**2 - tri
+    u1 = (2 / 3) * r**3 * s - (2 / 3) * r * c * tri
+    u2 = r**4 * (2 * alpha + np.sin(2 * alpha)) / 8 - r**2 * c**2 * tri / 2
+    w2 = r**4 * (2 * alpha - np.sin(2 * alpha)) / 8 - r**2 * s**2 * tri / 6
+    # shift u' (about the centre) to u (about the chord): u = u' - R cos(alpha)
+    h = r * c
+    iu = u1 - h * area
+    iuu = u2 - 2 * h * u1 + h**2 * area
+    first = area * m + iu * n
+    second = area * np.outer(m, m) + iu * (np.outer(m, n) + np.outer(n, m)) + iuu * np.outer(n, n) + w2 * np.outer(t, t)
+    return area, first, second
 
 
 def _expected(pts) -> dict:
     a, b, c, d = pts
-    tri_abc = _polygon_area(np.stack([a, b, c]))
-    assert tri_abc < 0, "fixture: the chord polygon of X must have turned over"
+    cap_top = _cap_moments(c, a, ALPHA)
+    cap_ad = _cap_moments(a, d, BETA)
+    cap_dc = _cap_moments(d, c, BETA)
+    tri_abc = _polygon_moments(np.stack([a, b, c]))
+    poly_y = _polygon_moments(np.stack([a, d, c, b]))
+    tri_adc = _polygon_moments(np.stack([a, d, c]))
+    assert tri_abc[0] < 0, "fixture: the chord polygon of X must have turned over"
+    pieces = (cap_top, cap_ad, cap_dc, tri_adc)
+    area = sum(p[0] for p in pieces)
+    first = sum(p[1] for p in pieces)
+    second = sum(p[2] for p in pieces)
+    centroid = first / area
     return {
-        "area_x": _cap_area(c, a, ALPHA) + tri_abc,
-        "area_y": _polygon_area(np.stack([a, d, c, b])) + _cap_area(a, d, BETA) + _cap_area(d, c, BETA),
-        "polygon_x": tri_abc,
+        "area_x": cap_top[0] + tri_abc[0],
+        "area_y": poly_y[0] + cap_ad[0] + cap_dc[0],
+        "polygon_x": tri_abc[0],
+        "cluster_area": area,
+        "centroid": centroid,
+        "central": second - area * np.outer(centroid, centroid),
     }
 
 
@@ -151,6 +200,17 @@ def test_crescent_cell_area(mirror, start_x, start_y) -> None:
     np.testing.assert_allclose(got[0], ref["area_x"], rtol=1e-12,
                                err_msg=f"crescent area; cap + |polygon| would be {unsigned}")
     np.testing.assert_allclose(got[1], ref["area_y"], rtol=1e-12)
+
+
+@pytest.mark.parametrize(("mirror", "start_x", "start_y"), CASES)
+def test_crescent_cluster_moments(mirror, start_x, start_y) -> None:
+    pts = _points(mirror)
+    he, angles, _ = _tables(start_x, start_y)
+    area, centroid, central = get_cluster_moments_bounded(jnp.asarray(pts), jnp.asarray(angles), jnp.asarray(he))
+    ref = _expected(pts)
+    np.testing.assert_allclose(float(area), ref["cluster_area"], rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(centroid), ref["centroid"], rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(central), ref["central"], rtol=1e-11, atol=1e-12)
 
 
 @pytest.mark.parametrize(("mirror", "start_x", "start_y"), CASES)

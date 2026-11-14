@@ -5,6 +5,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array, jit, vmap
 
 
@@ -402,3 +403,104 @@ def get_perimeter_bounded(face: Array, vertTable: Array, angTable: Array, heTabl
     final_carry, _ = jax.lax.scan(scan_body, initial_carry, xs)  # type: ignore
     _, final_res, _ = final_carry
     return final_res
+
+
+# Gauss-Legendre rule for the moments of a circular cap (see `_cap_moments`). The integrands are
+# analytic on [-alpha, alpha] with alpha <= pi/2, so 16 nodes reach machine precision in float64.
+_CAP_QUADRATURE_NODES, _CAP_QUADRATURE_WEIGHTS = np.polynomial.legendre.leggauss(16)
+
+
+def _cap_moments(chord: Array, angle: Array) -> tuple[Array, Array, Array, Array]:
+    """Area moments of the circular cap between a chord and its arc, in the chord's own frame.
+
+    The frame has its origin at the chord midpoint, ``u`` along the normal on the side of the arc and
+    ``w`` along the chord. ``angle`` is the half-angle the arc subtends at its centre, as stored in
+    ``angTable``. The cap is parametrised by the polar angle ``phi`` in ``[-angle, angle]``: a point of
+    the arc is at ``w = R sin(phi)``, and the cap's height above the chord there is
+    ``R (cos(phi) - cos(angle)) = 2 R sin((angle + phi)/2) sin((angle - phi)/2)``. That product form
+    has no cancellation for small angles, unlike the closed forms (sector minus triangle), which lose
+    most of their digits in float32 when the arc is nearly flat.
+
+    Returns ``(area, int u dA, int u^2 dA, int w^2 dA)``; ``int w dA`` and ``int u w dA`` vanish by
+    symmetry.
+    """
+    radius = chord / (2 * jnp.sin(angle))
+    phi = angle * _CAP_QUADRATURE_NODES
+    jac = angle * _CAP_QUADRATURE_WEIGHTS * radius * jnp.cos(phi)
+    height = 2 * radius * jnp.sin(0.5 * (angle + phi)) * jnp.sin(0.5 * (angle - phi))
+    w = radius * jnp.sin(phi)
+    return (
+        jnp.sum(jac * height),
+        jnp.sum(jac * height**2 / 2),
+        jnp.sum(jac * height**3 / 3),
+        jnp.sum(jac * w**2 * height),
+    )
+
+
+@jit
+def get_cluster_moments_bounded(vertTable: Array, angTable: Array, heTable: Array) -> tuple[Array, Array, Array]:
+    """Area, centroid and central second-moment matrix of the whole region covered by a bounded mesh.
+
+    The region is the union of the cells, each with its circular caps on the free interface, exactly
+    the region whose cell areas `get_area_bounded` returns. Its moments are computed by Green's
+    theorem: every half-edge of a cell contributes the moments of the triangle it spans with the
+    origin, and every free interface adds the moments of its circular cap, which always lies outside
+    its cell. Faces are traversed counterclockwise (`BoundedMesh` builds them so and T1 transitions
+    keep it), so the triangles are signed by the traversal and each cap lies to the right of its
+    directed chord. The orientation is not read from the sign of a cell's chord polygon, which turns
+    over in a crescent (a cell whose interior vertices have crossed the chord of its arc) while the
+    cell and its cap keep their side.
+
+    Args:
+        vertTable: vertex positions as stored in `BoundedMesh.vertices`, shape ``(nb_vertices, 2)``
+            (without the two reserved rows the energies prepend).
+        angTable: one arc half-angle per edge, as stored in `BoundedMesh.angles`.
+        heTable: the half-edge table, as stored in `BoundedMesh.edges`.
+
+    Returns:
+        ``(area, centroid, second_moments)``, where ``second_moments[i, j]`` is
+        ``int (x_i - c_i)(x_j - c_j) dA`` over the region, ``c`` its centroid. For an ellipse of
+        semi-axes ``a`` along x and ``b`` along y, ``second_moments = (pi a b / 4) diag(a^2, b^2)``.
+    """
+    # Moments about a reference point inside the cluster, so the centring subtraction does not cancel
+    # digits on a mesh far from the origin. Any reference gives the same central moments.
+    ref = jnp.mean(vertTable, axis=0)
+    vt = jnp.vstack([jnp.zeros((2, 2), dtype=vertTable.dtype), vertTable - ref])
+
+    source = heTable[:, 3] + heTable[:, 5]
+    target = heTable[:, 4] + heTable[:, 6] - 1
+    in_a_cell = source != 0  # the outer half-edge of a free interface belongs to no cell
+    p0 = vt[source]
+    p1 = vt[target]
+    x0, y0, x1, y1 = p0[:, 0], p0[:, 1], p1[:, 0], p1[:, 1]
+
+    # Polygon part: Green's theorem, triangle (origin, p0, p1) per half-edge of a cell.
+    s = (x0 * y1 - x1 * y0) * in_a_cell
+    area = jnp.sum(s) / 2
+    first = jnp.stack([jnp.sum(s * (x0 + x1)), jnp.sum(s * (y0 + y1))]) / 6
+    sxx = jnp.sum(s * (x0**2 + x0 * x1 + x1**2)) / 12
+    syy = jnp.sum(s * (y0**2 + y0 * y1 + y1**2)) / 12
+    sxy = jnp.sum(s * (2 * x0 * y0 + x0 * y1 + x1 * y0 + 2 * x1 * y1)) / 24
+
+    # Caps of the free interfaces. The surface half-edge is the one of the pair that lies in a cell.
+    is_surface = heTable[:, 5] != 0
+    angle = jnp.clip(angTable[jnp.arange(heTable.shape[0]) // 2], 1e-6, jnp.pi / 2)
+    d = p1 - p0
+    chord = jnp.sqrt(jnp.sum(d**2, axis=1) + 1e-30)
+    t = d / chord[:, None]
+    # Outward normal: to the right of the directed chord, the cell being traversed counterclockwise.
+    n = jnp.stack([t[:, 1], -t[:, 0]], axis=1)
+    m = 0.5 * (p0 + p1)
+    cap_a, cap_u, cap_uu, cap_ww = vmap(_cap_moments)(chord, angle)
+    cap_a, cap_u, cap_uu, cap_ww = (q * is_surface for q in (cap_a, cap_u, cap_uu, cap_ww))
+
+    area = area + jnp.sum(cap_a)
+    first = first + jnp.sum(cap_a[:, None] * m + cap_u[:, None] * n, axis=0)
+    second = jnp.array([[sxx, sxy], [sxy, syy]])
+    second = second + jnp.einsum("k,ki,kj->ij", cap_a, m, m)
+    second = second + jnp.einsum("k,ki,kj->ij", cap_u, m, n) + jnp.einsum("k,ki,kj->ij", cap_u, n, m)
+    second = second + jnp.einsum("k,ki,kj->ij", cap_uu, n, n) + jnp.einsum("k,ki,kj->ij", cap_ww, t, t)
+
+    centroid_rel = first / area
+    central = second - area * jnp.outer(centroid_rel, centroid_rel)
+    return area, centroid_rel + ref, central
