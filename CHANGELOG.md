@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+One library for the paper, its figure code and the documentation: the features that the VertAX paper's figure code uses and that only its branch had are merged in, the image costs leave the library, and the Hessian-weighted cost of the paper enters it. Without the new options, results are those of 0.3.0 with the fixes below.
+
+### Added: the Hessian-weighted cost $\mathcal C_W$ and the staged schedule
+
+- `hessian_at_target(target, energy, edges_params=None)`: the Hessian of the inner energy at the target geometry, every edge parameter set to one by default, symmetrized and divided by its spectral norm.
+- `make_cost_hessian_weighted(target, energy, edges_params=None)`: $\mathcal C_W=\tfrac12\lVert\widehat{\mathbf H}(\mathbf X-\mathbf X_{\text{target}})\rVert^2$ in the periodic outer-cost signature, with displacements to the nearest periodic image as in `cost_v2v`.
+- `switch_cost_at_target_topology(optimizer, mesh, cost)`: called after every epoch, it disables T1 transitions and sets the outer cost at the first epoch where the mesh has the target topology, the second stage of the staged schedule ($\mathcal C_{\text{v2v}}$, then $\mathcal C_W$).
+- New test: `tests/test_cost_hessian_weighted.py`, against the values of the code that defined $\mathcal C_W$ for Figure 3 of the paper, on two mesh pairs of the synthetic benchmark.
+
+### Added: from the paper's branch
+
+- `T1TensionReset` (bounded meshes, off by default): the edge created by a T1 transition starts at the mean tension of the other edges of its kind instead of inheriting the tension of the edge it replaces. `BoundedBilevelOptimizer.t1_tension_reset` and `last_t1_resets`; with the option, `update_T1_bounded` returns the post-reset parameters and the transitions per edge, and the bounded outer functions return a `T1ResetReport` as an eighth value. New test: `tests/test_t1_tension_reset_bounded.py`.
+- `reopen_margin`, a keyword of `update_T1_bounded`: length of the reopened edge, `(1 + reopen_margin) * min_dist_T1`, as for the periodic `update_T1`; default unchanged (`min_dist_T1 + 1e-3`). New test: `tests/test_bounded_t1_reopen_margin.py`.
+- `get_cluster_moments_bounded` (area, centroid and central second moments of a bounded cluster, arc caps included), `aspect_ratio_along_x`, `aspect_ratio_principal`, and the outer costs `make_cost_aspect_ratio_along_x` and `make_cost_aspect_ratio`. New test: `tests/test_cluster_aspect_ratio.py`; `tests/test_bounded_crescent_cell.py` also checks the cluster moments of a crescent cell.
+
+### Removed: the image costs
+
+- `cost_dmic`, `make_cost_dmic`, `render_interface_image`, `cost_mesh2image`, `make_cost_mesh2image`, `erode_mask_for_psf` and the constant `LEGACY_PSF_SIGMA`, with their tests, their README section and their website pages. They are kept on the branch `image-cost`.
+- The outer-cost protocol keeps its last argument, `image_target`, which no library cost now uses.
+
+### Fixed since 0.3.0
+
+- The line search scores the vertex steps capped and the bounded arc angles clipped, as the update leaves them.
+- L-BFGS: the stored positions follow the vertices that `update_pbc` wraps across the periodic box.
+- Bounded meshes: opt-in reset of the solver state after a T1 transition (`reset_solver_on_t1`); `update_T1_bounded` skips the triangular-twin-face emergency when the twin half-edge is an arc.
+- The bounded inverse regression runs on a clipped-SGD outer step; reference regenerated on Linux.
+
 ## 0.3.0 — 2026-10-28
 
 Four fixes, docstring corrections and test tolerances for references made on another machine. A minor
