@@ -65,6 +65,9 @@ from vertax.cost import (
     make_cost_aspect_ratio,
     make_cost_aspect_ratio_along_x,
     cost_v2v,
+    hessian_at_target,
+    make_cost_hessian_weighted,
+    switch_cost_at_target_topology,
 )
 from vertax.energy import (
     make_energy_line_tensions,
@@ -132,6 +135,9 @@ __all__ = [  # noqa: RUF022
     "make_cost_aspect_ratio",
     "make_cost_aspect_ratio_along_x",
     "cost_checkerboard",
+    "hessian_at_target",
+    "make_cost_hessian_weighted",
+    "switch_cost_at_target_topology",
     "energy_shape_factor_hetero",
     "energy_shape_factor_homo",
     "make_energy_shape_factor",

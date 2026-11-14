@@ -47,17 +47,22 @@ You can create a function with this signature exactly that uses also locally-acc
 
 from collections.abc import Callable
 from functools import partial
+from typing import TYPE_CHECKING
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, jit, vmap
 from jax.lax import fori_loop
-
 from numpy.typing import NDArray
 from scipy.optimize import linear_sum_assignment
 
 from vertax.energy import MAX_EDGES_IN_ANY_FACE
 from vertax.geo import get_area, get_cluster_moments_bounded, min_image_sq_dist
+
+if TYPE_CHECKING:
+    from vertax.bilevelopt.pbcbop import PbcBilevelOptimizer
+    from vertax.meshes.pbc_mesh import PbcMesh
 
 TARGET_RATIO = 2.0
 
@@ -404,3 +409,181 @@ def topological_distance(
     loss = int(np.sum(diff_upper))
 
     return loss
+
+
+#############################
+# HESSIAN-WEIGHTED COST C_W #
+#############################
+
+
+def hessian_at_target(
+    target: "PbcMesh",
+    energy: Callable,
+    edges_params: Array | None = None,
+) -> Array:
+    r"""Hessian of the inner energy at the target geometry, divided by its spectral norm.
+
+    The Hessian $\mathbf H=\nabla^2_{\mathbf X}\mathcal E$ is taken with respect to the flattened
+    vertex positions $\mathbf X=(x_1,y_1,x_2,y_2,\dots)$ of ``target``, at its own topology and box,
+    with the target's ``vertices_params`` and ``faces_params`` (for $\mathcal E_2$, the target
+    areas $A^0$). It is symmetrized, $(\mathbf H+\mathbf H^{\mathsf T})/2$, and divided by its
+    spectral norm $\max_i|\lambda_i(\mathbf H)|$, so that its largest eigenvalue in magnitude is 1.
+
+    Args:
+        target: The target mesh. Its vertex positions are converted to JAX's default float dtype;
+            use `float64` (`jax_enable_x64`) for anything that depends on the small eigenvalues.
+        energy: The inner energy with the signature of `PbcBilevelOptimizer.loss_function_inner`,
+            ``energy(vertTable, heTable, faceTable, vert_params, he_params, face_params)``.
+        edges_params: The edge parameters at which the Hessian is evaluated. ``None`` (the default)
+            sets every one of them to 1: for a line-tension energy every tension is one, so the
+            weighting uses the observed geometry and nothing of the tensions being inferred.
+
+    Returns:
+        The normalized Hessian, shape ``(2 * nb_vertices, 2 * nb_vertices)``.
+    """
+    dtype = jnp.result_type(float)
+    vertices = jnp.asarray(target.vertices, dtype=dtype)
+    shape = vertices.shape
+    if edges_params is None:
+        edges_params = jnp.ones(len(target.edges_params), dtype=dtype)
+    vert_params = jnp.asarray(target.vertices_params, dtype=dtype)
+    face_params = jnp.asarray(target.faces_params, dtype=dtype)
+
+    def energy_of_flat_positions(x: Array) -> Array:
+        return energy(x.reshape(shape), target.edges, target.faces, vert_params, edges_params, face_params)
+
+    hess = jax.hessian(energy_of_flat_positions)(vertices.ravel())
+    hess = 0.5 * (hess + hess.T)
+    return hess / jnp.max(jnp.abs(jnp.linalg.eigvalsh(hess)))
+
+
+def make_cost_hessian_weighted(
+    target: "PbcMesh",
+    energy: Callable,
+    edges_params: Array | None = None,
+) -> Callable:
+    r"""Hessian-weighted vertex cost $\mathcal C_W$ for a `PbcMesh`, in the periodic outer-cost signature.
+
+    $$
+    \mathcal C_W=\tfrac12\bigl\lVert\widehat{\mathbf H}\,(\mathbf X-\mathbf X_{\text{target}})\bigr\rVert^2 ,
+    $$
+
+    where $\widehat{\mathbf H}$ is `hessian_at_target` (by default with every edge parameter set to
+    1) and each vertex displacement $\mathbf X-\mathbf X_{\text{target}}$ is taken to the nearest
+    periodic image of the target vertex, as in `cost_v2v`. The vertex cost `cost_v2v` is
+    $\tfrac12\lVert\mathbf H^{+}\mathbf M\,\delta\boldsymbol\theta\rVert^2$ to first order in the
+    parameter error $\delta\boldsymbol\theta$ ($\mathbf M$, the derivative of the forces with respect
+    to the parameters), so the soft modes of the tissue, with small Hessian eigenvalues, amplify any
+    geometric error; $\mathcal C_W$ is $\tfrac12\lVert\mathbf M\,\delta\boldsymbol\theta\rVert^2$ to the
+    same order, the force residual, which they do not amplify. The normalization multiplies the cost
+    by a constant and keeps its scale comparable to that of `cost_v2v`.
+
+    $\widehat{\mathbf H}$ is computed once, from ``target``, and belongs to its topology: the cost
+    compares vertex $i$ of the mesh with vertex $i$ of the target, and is meant for a mesh with the
+    target topology, kept fixed (``update_T1 = False``). From another topology, use the staged
+    schedule of `switch_cost_at_target_topology`.
+
+    Args:
+        target: The target mesh; the cost compares with the target vertices the optimizer passes,
+            which are normally ``target.vertices``.
+        energy: The inner energy, in the signature of `PbcBilevelOptimizer.loss_function_inner`.
+        edges_params: The edge parameters of the Hessian; ``None`` sets them all to 1.
+
+    Returns:
+        ``cost_hessian_weighted(vertTable, heTable, faceTable, width, height, vertTable_target,
+        heTable_target, faceTable_target, selected_verts, selected_hes, selected_faces,
+        image_target)``, for `PbcBilevelOptimizer.loss_function_outer`. With ``selected_verts``,
+        the sum runs over the rows of $\widehat{\mathbf H}(\mathbf X-\mathbf X_{\text{target}})$
+        that belong to the selected vertices, the components of the force residual there; the
+        displacement of every vertex still enters through $\widehat{\mathbf H}$. The edge and face
+        selections and ``image_target`` are not used. The normalized Hessian is the attribute
+        ``hessian`` of the returned function.
+
+    Example:
+        ```python
+        optimizer.loss_function_outer = make_cost_hessian_weighted(target, optimizer.loss_function_inner)
+        optimizer.update_T1 = False
+        ```
+    """
+    hessian = hessian_at_target(target, energy, edges_params)
+
+    def cost_hessian_weighted(
+        vertTable: Array,
+        heTable: Array,  # noqa: ARG001
+        faceTable: Array,  # noqa: ARG001
+        width: float,
+        height: float,
+        vertTable_target: Array,
+        heTable_target: Array | None = None,  # noqa: ARG001
+        faceTable_target: Array | None = None,  # noqa: ARG001
+        selected_verts: Array | None = None,
+        _selected_hes: Array | None = None,
+        _selected_faces: Array | None = None,
+        _image_target: Array | None = None,
+    ) -> Array:
+        d = vertTable - vertTable_target
+        dx = jnp.stack(
+            [d[:, 0] - width * jnp.round(d[:, 0] / width), d[:, 1] - height * jnp.round(d[:, 1] / height)], axis=1
+        ).ravel()
+        hdx = hessian @ dx
+        if selected_verts is not None:
+            hdx = hdx.reshape(-1, 2)[selected_verts]
+        return 0.5 * jnp.sum(hdx * hdx)
+
+    cost_hessian_weighted.hessian = hessian  # type: ignore[attr-defined]
+    return cost_hessian_weighted
+
+
+def switch_cost_at_target_topology(optimizer: "PbcBilevelOptimizer", mesh: "PbcMesh", cost: Callable) -> bool:
+    r"""Second stage of the staged schedule: at the first match with the target topology, freeze it and change cost.
+
+    The staged schedule infers parameters from a mesh whose topology differs from the target's. It
+    minimizes a cost without a fixed metric, normally `cost_v2v`, with T1 transitions active, until
+    the topology of the mesh first matches that of the target ($d_{\text{topo}}=0$,
+    `topological_distance`); it then disables T1 transitions and minimizes ``cost``, normally
+    `make_cost_hessian_weighted`, whose Hessian belongs to the target topology and changes
+    discontinuously at a T1 transition. Switching at the first match matters: under `cost_v2v` the
+    topology can match and unmatch again, so a rule that waits for several matching epochs switches
+    late or never.
+
+    Call it after every epoch. It compares ``mesh`` with the optimizer's target
+    (``vertices_target``, ``edges_target``, ``faces_target``); once the switch has been made, it
+    leaves the optimizer as it is and returns ``True`` without computing the distance again. To cap
+    the first stage at a number of epochs, make the switch yourself when the cap is reached
+    (``optimizer.update_T1 = False``; ``optimizer.loss_function_outer = cost``).
+
+    Args:
+        optimizer: The `PbcBilevelOptimizer` that runs the inference, with its first-stage cost set.
+        mesh: The mesh being optimized, after the epoch.
+        cost: The cost of the second stage.
+
+    Returns:
+        ``True`` if the second stage is in effect (the switch happened now or earlier), ``False`` if
+        the mesh does not have the target topology yet.
+
+    Example:
+        ```python
+        optimizer.loss_function_outer = cost_v2v
+        cost_w = make_cost_hessian_weighted(target, optimizer.loss_function_inner)
+        for epoch in range(n_epochs):
+            optimizer.bilevel_optimization(mesh)
+            switch_cost_at_target_topology(optimizer, mesh, cost_w)
+        ```
+    """
+    if optimizer.loss_function_outer is cost and not optimizer.update_T1:
+        return True
+    distance = topological_distance(
+        mesh.vertices,
+        mesh.edges,
+        mesh.faces,
+        mesh.width,
+        mesh.height,
+        optimizer.vertices_target,
+        optimizer.edges_target,
+        optimizer.faces_target,
+    )
+    if distance != 0:
+        return False
+    optimizer.update_T1 = False
+    optimizer.loss_function_outer = cost
+    return True

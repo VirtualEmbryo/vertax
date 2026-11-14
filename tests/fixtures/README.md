@@ -25,3 +25,11 @@ asserts that the cell area is the signed chord polygon plus the caps. It was pro
 of `test_forward_modeling_bounded.py` under an energy that read the area of such a cell as
 `|polygon| + caps`, which cannot resist the fold; the energy now reads the signed area, so that
 relaxation no longer produces it, and the file is kept as a fixed input rather than regenerated.
+
+## `mesh_1000.npz`, `mesh_target_1000.npz`
+
+A second initial/target pair of the same benchmark, at `d_topo = 2`: the initial mesh is one T1 transition away from its target. Added by explicit path, like the pair above.
+
+## `hessian_weighted_cost_reference.npz`
+
+The normalized Hessian of `E2` at the target (every tension one, and for instance 1008 also the true tensions), the Hessian-weighted cost at the initial mesh and its gradient, for instances 1008 and 1000, as computed by the functions that defined this cost in the Figure 3 inference script of the VertAX paper. Written by `make_hessian_weighted_cost_reference.py` (run with that script and the library of branch `manuscript-prep` at commit `0352a4ec`, float64); read by `test_cost_hessian_weighted.py`, which checks that `vertax.cost.make_cost_hessian_weighted` gives the same values.
