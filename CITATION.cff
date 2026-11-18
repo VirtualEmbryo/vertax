@@ -1,0 +1,54 @@
+cff-version: 1.2.0
+message: "If you use VertAX in your research, please cite the preprint below."
+type: software
+title: "VertAX"
+abstract: "A differentiable JAX-based framework for vertex modeling and inverse design of epithelial tissues."
+version: 0.4.0
+# date-released: set when the release is tagged
+license: GPL-3.0-or-later
+repository-code: "https://github.com/VirtualEmbryo/vertax"
+url: "https://virtualembryo.github.io/vertax/"
+authors:
+  - family-names: Pasqui
+    given-names: Alessandro
+  - family-names: Perez
+    given-names: Matthieu
+  - family-names: Corbeau
+    given-names: Michael
+  - family-names: Catacora Ocana
+    given-names: Jim
+  - family-names: Sinha
+    given-names: Anshuman
+  - family-names: Turlier
+    given-names: Hervé
+preferred-citation:
+  type: article
+  title: "VertAX: a differentiable vertex model for learning epithelial tissue mechanics"
+  authors:
+    - family-names: Pasqui
+      given-names: Alessandro
+    - family-names: Catacora Ocana
+      given-names: Jim Martin
+    - family-names: Sinha
+      given-names: Anshuman
+    - family-names: Perez
+      given-names: Matthieu
+    - family-names: Delbary
+      given-names: Fabrice
+    - family-names: Gosti
+      given-names: Giorgio
+    - family-names: Miotto
+      given-names: Mattia
+    - family-names: Caudo
+      given-names: Domenico
+    - family-names: Ernoult
+      given-names: Maxence
+    - family-names: Turlier
+      given-names: Hervé
+  journal: "arXiv"
+  year: 2026
+  notes: "Preprint, arXiv:2604.06896"
+  identifiers:
+    - type: other
+      value: "arXiv:2604.06896"
+  url: "https://arxiv.org/abs/2604.06896"
