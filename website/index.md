@@ -23,8 +23,8 @@ energy and $\mathcal{C}$ the cost to minimize.
 
 VertAX has two kinds of meshes: periodic meshes, for a piece of bulk tissue without boundaries, and
 bounded meshes, for a finite cluster of cells whose outline is made of circular arcs. It provides
-energies, costs and four ways to estimate the gradient of the cost with respect to the parameters,
-and it performs T1 transitions during the relaxations.
+energies, costs and four ways to estimate the gradient of the cost with respect to the parameters
+(AD, Sen-ID, Adj-ID and EP), and it performs T1 transitions during the relaxations.
 
 ## Contents
 
@@ -37,9 +37,20 @@ and it performs T1 transitions during the relaxations.
 
 ## Citing VertAX
 
-!!! note "TODO (H. Turlier)"
-    Citation to be added. The README on main currently cites the preprint
-    [arXiv:2604.06896](https://arxiv.org/abs/2604.06896).
+If you use VertAX in your research, please cite the preprint
+[arXiv:2604.06896](https://arxiv.org/abs/2604.06896):
+
+```bibtex
+@misc{pasqui2026vertaxdifferentiablevertexmodel,
+      title={VertAX: a differentiable vertex model for learning epithelial tissue mechanics},
+      author={Alessandro Pasqui and Jim Martin Catacora Ocana and Anshuman Sinha and Matthieu Perez and Fabrice Delbary and Giorgio Gosti and Mattia Miotto and Domenico Caudo and Maxence Ernoult and Hervé Turlier},
+      year={2026},
+      eprint={2604.06896},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2604.06896},
+}
+```
 
 ## License
 

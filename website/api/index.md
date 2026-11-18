@@ -15,13 +15,13 @@ imported from `vertax` directly, for example `from vertax import PbcMesh, cost_v
 | [`vertax.bilevelopt.boundedbop`](bounded-bilevel-optimizer.md) | `BoundedBilevelOptimizer` |
 | [`vertax.bilevelopt.rheobop`](shear-rheology-optimizer.md) | `ShearRheologyOptimizer`, `ShearState` |
 | [`vertax.method_enum`](method-enum.md) | `BilevelOptimizationMethod`, `EPVariant` |
-| [`vertax.energy`](energy.md) | energies: shape factor, line tensions |
-| [`vertax.cost`](cost.md) | costs: vertex to vertex, images, bounded design, topological distance |
+| [`vertax.energy`](energy.md) | energies: shape factor, line tensions (periodic and bounded) |
+| [`vertax.cost`](cost.md) | costs and measurements: `cost_v2v`, the Hessian-weighted cost $\mathcal C_W$ (`hessian_at_target`, `make_cost_hessian_weighted`) and its staged schedule (`switch_cost_at_target_topology`), `cost_areas`, the bounded design costs (`aspect_ratio_along_x`, `aspect_ratio_principal`, `make_cost_aspect_ratio_along_x`, `make_cost_aspect_ratio`, `cost_ratio`, `cost_checkerboard`), `topological_distance` |
 | [`vertax.opt`](opt.md) | relaxation (`minimize`) and the four estimators, periodic meshes |
-| [`vertax.opt_bounded`](opt-bounded.md) | relaxation and the four estimators, bounded meshes |
+| [`vertax.opt_bounded`](opt-bounded.md) | relaxation and the four estimators, bounded meshes, with the reports of the T1 tension reset (`T1Resets`, `T1ResetReport`) |
 | [`vertax.cg`](cg.md) | `cg_linesearch`, `gd_linesearch` |
-| [`vertax.topo`](topo.md) | T1 transitions |
-| [`vertax.geo`](geo.md) | lengths, perimeters and areas |
+| [`vertax.topo`](topo.md) | T1 transitions: `update_T1`, `update_T1_bounded` (with `reopen_margin`), `T1TensionReset` |
+| [`vertax.geo`](geo.md) | lengths, perimeters, areas, and the second moments of a bounded cluster (`get_cluster_moments_bounded`) |
 | [`vertax.rheology`](rheology.md) | shear rheometry and its diagnostics |
 | [`vertax.trace`](trace.md) | tracing a label mask into a mesh |
 | [`vertax.clamped`](clamped.md) | mechanics of a clamped patch |
