@@ -34,7 +34,7 @@ The attributes used by the outer problem are:
 | `bilevel_optimization_method` | `EQUILIBRIUM_PROPAGATION` | the gradient estimator, below |
 | `outer_solver` | `optax.adam(learning_rate=0.0001, nesterov=True)` | the Optax solver of the parameters |
 | `vertices_target`, `edges_target`, `faces_target` | empty arrays | target tables, passed to the cost |
-| `image_target` | empty array | a target image, passed to the cost |
+| `image_target` | empty array | passed to the cost as its last argument; no cost of the library uses it |
 | `angles_target` | empty array | bounded only: target angles, passed to the cost |
 | `beta` | unset (resolves to `0.01`) | nudging size of equilibrium propagation |
 | `ep_variant` | `EPVariant.CENTERED` | form of the equilibrium-propagation estimate |
@@ -42,6 +42,7 @@ The attributes used by the outer problem are:
 | `mean_tension_gauge` | `None` | alias for `params_normalization={"edges_params": value}` |
 | `params_regularizer` | `None` | `R(vert_params, he_params, face_params)`, added to the cost |
 | `persist_outer_state` | `False` | keep the outer solver state between epochs (EP, periodic only) |
+| `t1_tension_reset` | `None` | bounded only: tension given to an edge created by a T1 transition, see [T1 transitions](t1-transitions.md#the-tension-of-the-new-edge) |
 
 The outer solver is initialized again at every outer step, for every estimator, unless
 `persist_outer_state` is set. With Adam, a step from a fresh state moves each parameter by about the
@@ -70,7 +71,9 @@ function)` adds a column computed by `function(mesh, optimizer)`. See the
 
 The gradient of the cost with respect to the parameters goes through the equilibrium $X^\ast_\theta$.
 `bilevel_optimization_method` chooses how it is estimated, among the members of
-[`BilevelOptimizationMethod`][vertax.method_enum.BilevelOptimizationMethod].
+[`BilevelOptimizationMethod`][vertax.method_enum.BilevelOptimizationMethod]. The paper calls them AD
+(automatic differentiation), Sen-ID and Adj-ID (implicit differentiation, in its sensitivity and its
+adjoint form) and EP (equilibrium propagation).
 
 ### Automatic differentiation (AD)
 
@@ -83,7 +86,7 @@ Line-search solvers cannot be differentiated through. The optimizer refuses to c
 line-search inner solver: it prints a warning and keeps its previous setting, whether you change the
 method or the solver.
 
-### Implicit differentiation (Sen-ID)
+### Implicit differentiation, sensitivity form (Sen-ID)
 
 `IMPLICIT_DIFFERENTIATION` relaxes the mesh, then uses the optimality condition
 $\nabla_X \mathcal{E}(X^\ast, \theta) = 0$. For each parameter $\theta_j$, it solves
@@ -93,7 +96,7 @@ systems are solved by SciPy's MINRES, with Hessian-vector products from JAX; the
 formed. There is one solve for every entry of the three parameter arrays, including entries the
 energy does not use, so the cost grows with the number of parameters.
 
-### Adjoint state (Adj-ID)
+### Implicit differentiation, adjoint form (Adj-ID)
 
 `ADJOINT_STATE` uses the same optimality condition, solved in the other direction: one solve of
 $H \lambda = \nabla_X \mathcal{C}$, then the gradient is
@@ -140,6 +143,17 @@ method prints a warning.
 The [gradient estimators example](../examples/gradient-estimators.md) computes the four estimates on
 the same problem.
 
+## Choosing the cost for line-tension inference
+
+The costs are in [Costs](costs.md). To infer line tensions from a target geometry, the paper uses the
+vertex-matching cost $\mathcal C_{\text{v2v}}$ (`cost_v2v`) and the Hessian-weighted cost $\mathcal C_W$
+(`make_cost_hessian_weighted`), which compensates for the amplification of the geometric error by the
+soft modes of the tissue. $\mathcal C_W$ belongs to the topology of the target. When the starting mesh
+has another topology, a staged schedule minimizes $\mathcal C_{\text{v2v}}$ with T1 transitions on until
+the topology first matches the target's ($d_{\mathrm{T1}} = 0$), then fixes the topology and switches
+to $\mathcal C_W$: call `switch_cost_at_target_topology` after every epoch. Fix the mean tension with
+`params_normalization` (next section) in either case.
+
 ## Parameter constraints
 
 Some directions of parameter space are hard to observe. For line tensions, adding the same constant to
@@ -165,12 +179,14 @@ every estimator.
 
 ## Bounded meshes
 
-A `BoundedBilevelOptimizer` has the same attributes and the same estimators, plus `angles_target`.
-It honours `params_regularizer` and `ep_variant` as the periodic optimizer does, and refuses
-`persist_outer_state` (above).
-The bounded inverse problems of the repository are design problems: the cost measures a shape
-([`cost_ratio`][vertax.cost.cost_ratio]) or a pattern of fates
-([`cost_checkerboard`][vertax.cost.cost_checkerboard]) rather than a distance to a target mesh. Do not
+A `BoundedBilevelOptimizer` has the same attributes and the same estimators, plus `angles_target` and
+`t1_tension_reset`. It honours `params_regularizer` and `ep_variant` as the periodic optimizer does,
+and refuses `persist_outer_state` (above).
+The bounded inverse problems of the repository are design problems: the cost measures a shape, the
+aspect ratio of the cluster ([`make_cost_aspect_ratio_along_x`][vertax.cost.make_cost_aspect_ratio_along_x],
+[`make_cost_aspect_ratio`][vertax.cost.make_cost_aspect_ratio], [`cost_ratio`][vertax.cost.cost_ratio])
+or a pattern of fates ([`cost_checkerboard`][vertax.cost.cost_checkerboard]), rather than a distance to
+a target mesh. Do not
 set `vertices_target` with T1 transitions on: the vertex relabelling that follows T1 transitions is
 not implemented for bounded meshes and raises an error (see [T1 transitions](t1-transitions.md)).
 
@@ -183,10 +199,13 @@ behind the four estimators, [`outer_opt_bounded`][vertax.opt_bounded.outer_opt_b
 [`outer_adjoint_state_bounded`][vertax.opt_bounded.outer_adjoint_state_bounded], return seven
 arrays: the vertices, angles, edges and faces, then the vertex, edge and face parameters.
 
-Before version 0.3.0, these functions returned six arrays, without the angles, and the mesh kept
-the angles it had before the outer step. A bounded run in which a relaxation follows an outer step
-(`bilevel_optimization`, `do_n_bilevel_optimization`) gives other results since 0.3.0 with AD, EP
-and Sen-ID; see the [release notes](../release-notes.md).
+With `t1_tension_reset` set (see [T1 transitions](t1-transitions.md#the-tension-of-the-new-edge)), they
+return an eighth value, a [`T1ResetReport`][vertax.opt_bounded.T1ResetReport]: the outer update is
+applied to the edge parameters that the estimator's relaxation ended with, after the resets, and the
+report says which edges were reset. With EP, each of the two relaxations resets the edges its own T1
+transitions create; `nudged_mismatch` counts the edges on which they disagree, and when it is not
+zero the two halves of the EP difference refer to different parameters, so the estimate is no longer a
+difference of one map. The optimizer keeps the report in `last_t1_resets`.
 
 ## A first run
 
