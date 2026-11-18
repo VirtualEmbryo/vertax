@@ -58,7 +58,7 @@ for seed in (1, 5):
         print(f"seed {seed}, cap_vertex_step={cap}: largest step {step:6.1f} x min_dist_T1, {folded} folded cell(s)")
 ```
 
-In the run that checked this page, the uncapped step moved a vertex by 51 and 67 times
+In the run that checked this page, the uncapped step moved a vertex by 70 and 74 times
 `min_dist_T1` for the two seeds, and folded one cell for seed 5; with the cap, the largest step was
 5 times `min_dist_T1` and no cell folded. The test counts a cell as inverted when the sign of its
 vertex polygon changes, a broader criterion that also catches seed 1. The cap is `5 * min_dist_T1`

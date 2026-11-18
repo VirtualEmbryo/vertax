@@ -106,7 +106,11 @@ estimates(mesh)
 
 From an equilibrium, the four estimates agree closely: automatic differentiation and equilibrium
 propagation approximate, through a long relaxation and a small $\beta$, the gradient that the two
-implicit estimators compute at the equilibrium.
+implicit estimators compute at the equilibrium. In the run that checked this page, the norm of the
+gradient was $2.77 \times 10^{-3}$ for automatic differentiation and equilibrium propagation and
+$2.79 \times 10^{-3}$ for the two implicit estimators; relative to the adjoint-state estimate, the
+difference was $0.9\,\%$ for automatic differentiation and equilibrium propagation and $0.1\,\%$ for the
+sensitivity estimate.
 
 ## When the state is not at equilibrium
 
@@ -122,8 +126,8 @@ estimates(unrelaxed)
 ```
 
 Far from equilibrium the four estimates disagree by orders of magnitude. In the run that checked
-this page (one CPU thread, `float64`), the norms were about $8 \times 10^{8}$ for automatic
-differentiation, 36 for equilibrium propagation, and 0.012 for the two implicit estimators, which
+this page (one CPU thread, `float64`), the norms were about $1.4 \times 10^{9}$ for automatic
+differentiation, 27 for equilibrium propagation, and 0.014 for the two implicit estimators, which
 agree with each other. None of these is the gradient at an equilibrium: automatic differentiation and
 equilibrium propagation work on relaxations that are far from converged, and the implicit estimators
 apply the optimality condition at a state where it does not hold. Relax to equilibrium, and check the
