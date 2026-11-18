@@ -51,11 +51,12 @@ classifiers = [
 #  - which license your package is available under,
 
 [project.urls]
-# Corrected 2026-08-15: these four pointed at gitlab.college-de-france.fr/virtualembryo/vertax,
-# which is not where this repository lives. The actual remote is src.koda.cnrs.fr/turlierlab/vertax.
-Homepage = "https://src.koda.cnrs.fr/turlierlab/vertax"
-"Bug Tracker" = "https://src.koda.cnrs.fr/turlierlab/vertax/-/issues"
-Changelog = "https://src.koda.cnrs.fr/turlierlab/vertax/-/releases"
+# The public repository is VirtualEmbryo/vertax on GitHub; the documentation website is built from it
+# and published on GitHub Pages.
+Homepage = "https://github.com/VirtualEmbryo/vertax"
+Documentation = "https://virtualembryo.github.io/vertax/"
+"Bug Tracker" = "https://github.com/VirtualEmbryo/vertax/issues"
+Changelog = "https://github.com/VirtualEmbryo/vertax/blob/main/CHANGELOG.md"
 "Turlier lab" = "https://www.turlierlab.com"
 
 [tool.ruff]
