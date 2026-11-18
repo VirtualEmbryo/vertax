@@ -104,3 +104,11 @@ centered, divided by the spread of the true tensions; the practical guide
 `docs/tension_inference_guide.md` of the repository explains why it is a better measure than a
 relative error. Twenty epochs are far from enough to recover the tensions: the guide's runs use
 hundreds.
+
+## Other costs for tension inference
+
+This example uses the vertex-to-vertex cost $\mathcal C_{\text{v2v}}$. The paper also uses the
+Hessian-weighted cost $\mathcal C_W$, which compensates for the amplification of the geometric error by
+the soft modes of the tissue, and a staged schedule for a starting mesh whose topology differs from
+the target's ($d_{\mathrm{T1}} > 0$). Both are described, with a runnable example, in
+[Costs](../user-guide/costs.md#hessian-weighted-vertex-cost-and-the-staged-schedule).

@@ -65,3 +65,36 @@ fig.savefig("elongation_after.png")
 `cost_ratio(mesh.vertices)` can be called with the vertices alone, because its other eleven
 arguments have defaults. The notebook runs ten epochs with a smaller learning rate, `1e-4`; the test
 runs three with `0.01`.
+
+## Other measures of elongation
+
+`cost_ratio` takes the longest distance between two vertices, so it changes abruptly when the farthest
+pair of vertices changes. The aspect ratios of the cluster that the paper's design tasks use are
+smooth: they are computed from the second moments of the region the cluster covers, circular caps
+included. [`aspect_ratio_along_x`][vertax.cost.aspect_ratio_along_x] is $r_x=\sqrt{S_{xx}/S_{yy}}$,
+with the axis of elongation fixed to $x$; [`aspect_ratio_principal`][vertax.cost.aspect_ratio_principal]
+is $\sqrt{\lambda_1/\lambda_2}$ along the principal axes of the cluster, whatever its orientation. The
+factories [`make_cost_aspect_ratio_along_x`][vertax.cost.make_cost_aspect_ratio_along_x] and
+[`make_cost_aspect_ratio`][vertax.cost.make_cost_aspect_ratio] return the cost
+$(r - r_{\text{target}})^2$ for a target ratio. Here they are on the designed cluster:
+
+```python
+from vertax.cost import (aspect_ratio_along_x, aspect_ratio_principal, make_cost_aspect_ratio,
+                         make_cost_aspect_ratio_along_x)
+
+print("r_x:", float(aspect_ratio_along_x(mesh.vertices, mesh.angles, mesh.edges)))
+print("r:  ", float(aspect_ratio_principal(mesh.vertices, mesh.angles, mesh.edges)))
+
+cost_along_x = make_cost_aspect_ratio_along_x(2.0)
+cost_principal = make_cost_aspect_ratio(2.0)
+print("cost along x:  ", float(cost_along_x(mesh.vertices, mesh.angles, mesh.edges)))
+print("cost, principal:", float(cost_principal(mesh.vertices, mesh.angles, mesh.edges)))
+
+optimizer.loss_function_outer = cost_along_x  # for the next epochs
+print(f"epoch 6: cost {optimizer.compute_outer_loss(mesh):.4f}")
+optimizer.bilevel_optimization(mesh)
+print(f"epoch 7: cost {optimizer.compute_outer_loss(mesh):.4f}")
+```
+
+The three cost functions take the bounded signature, so any of them can be the `loss_function_outer`
+of a `BoundedBilevelOptimizer`.
