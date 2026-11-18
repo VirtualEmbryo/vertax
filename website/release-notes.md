@@ -3,7 +3,7 @@
 What each release changes for a user, and what you may have to change in your own code. The
 [changelog](changelog.md) has the full list.
 
-## Unreleased
+## 0.4.0 (date to set when tagging)
 
 One library for the paper, its figure code and the documentation. The features that the figure code of the
 VertAX paper uses, and that only its branch had, are merged in; the image costs leave the library; the
