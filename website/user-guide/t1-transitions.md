@@ -34,8 +34,9 @@ not: they pass `perform_energy_check=False` to the relaxations they run.
 
 These are arguments of `minimize` and of `update_T1`, not attributes of the optimizers:
 
-- `reopen_margin`: the length of the new edge, as above. `minimize` calls the T1 function with
-  fixed positional arguments, so pass a different margin with `functools.partial`:
+- `reopen_margin`: the length of the new edge, as above (for bounded meshes, see below).
+  `minimize` calls the T1 function with fixed positional arguments, so pass a different margin with
+  `functools.partial`:
   `minimize(..., update_t1_func=functools.partial(update_T1, reopen_margin=0.2))`.
 - `count_t1=True` makes `minimize` also return, for each iteration, the number of edges presented to
   the T1 update (no longer than `min_dist_T1`, neither cell a triangle) and the number of flips kept.
@@ -92,8 +93,107 @@ one of the test of `count_t1`; it has fewer than 20 cells, so its construction p
 For a bounded mesh, [`update_T1_bounded`][vertax.topo.update_T1_bounded] distinguishes edges inside
 the cluster from edges that touch its outline. A T1 transition can bring a cell to the outline or
 take it inside. The arc angles are kept between `ARC_HALF_ANGLE_MIN = 0.017` and
-`ARC_HALF_ANGLE_MAX = pi/2 - 0.001`. `reopen_margin`, `count_t1` and `recording_t1_statistics` are
-periodic only.
+`ARC_HALF_ANGLE_MAX = pi/2 - 0.001`. `count_t1` and `recording_t1_statistics` are periodic only.
+
+### The length of the reopened edge
+
+`update_T1_bounded` has a keyword `reopen_margin`, with the same meaning as for the periodic
+`update_T1`: the new edge, and the edge that is re-stretched when the flip is refused, is given the
+length `(1 + reopen_margin) * min_dist_T1` about the midpoint of the old edge. Its default, `None`,
+keeps the length `min_dist_T1 + 1e-3` that bounded results have always used. An edge only `1e-3`
+above the threshold can be shortened below it again by a single relaxation step, and then flips back.
+`BoundedBilevelOptimizer` does not expose the margin; pass it to the relaxation function with
+`functools.partial`, as in the example below.
+
+### The tension of the new edge
+
+In a bounded mesh an edge keeps its index, and so its parameter, through a T1 transition: the new
+edge inherits the line tension of the edge it replaces. When the outer optimization has raised that
+tension enough for the old edge to collapse, the new edge collapses too, and the pair can flip back
+and forth.
+
+[`T1TensionReset`][vertax.topo.T1TensionReset] changes this rule, and is off by default. With it, the
+new edge starts at the mean tension of the other edges of its own kind (interior edges for a new
+interior edge, free-interface edges for a new free-interface edge). Physically, a new junction
+carries none of the tension that was built up on the junction it replaces. The mean is taken over the
+tensions rather than over their parameters: if the energy maps the parameters through a sigmoid
+(`make_energy_line_tensions_bounded(..., sigmoid_tensions=True)`), create `T1TensionReset(sigmoid_tensions=True)`.
+The reset is a smooth function of the parameters of the other edges, so automatic differentiation of
+a relaxation differentiates through it.
+
+Set it on the optimizer as `t1_tension_reset`, and it applies in every relaxation, the inner
+optimization and those of the estimators:
+
+- `inner_optimization` stores the post-reset edge parameters in the mesh;
+- the outer step applies its update to the post-reset parameters of the estimator's relaxation, so
+  that a junction created by a T1 transition keeps its reset tension in the design;
+- `optimizer.last_t1_resets` is a [`T1ResetReport`][vertax.opt_bounded.T1ResetReport]: the
+  post-reset parameters, the T1 transitions accepted on each edge in each relaxation (`flips`, one
+  array per relaxation, two for EP), and, for EP, the number of edges on which its two solves
+  disagree (`nudged_mismatch`). It is `None` without the option.
+
+The four `outer_*_bounded` functions of [`vertax.opt_bounded`](../api/opt-bounded.md) take
+`tension_reset` too, and then return the `T1ResetReport` as an eighth value; `inner_opt_bounded`
+returns a [`T1Resets`][vertax.opt_bounded.T1Resets] as a third value. The reset applies to a
+relaxation of the vertices and arcs only.
+
+```python
+import functools
+import math
+
+import jax
+
+jax.config.update("jax_enable_x64", True)
+
+import jax.numpy as jnp
+import numpy as np
+import optax
+
+from vertax import BoundedBilevelOptimizer, BoundedMesh, T1TensionReset
+from vertax.energy import make_energy_line_tensions_bounded
+from vertax.opt_bounded import inner_opt_bounded
+from vertax.topo import update_T1_bounded
+
+side = math.sqrt(12)
+cluster = BoundedMesh.from_random_seeds(nb_seeds=12, width=side, height=side, random_key=1)
+cluster.vertices_params = jnp.zeros(1)
+cluster.edges_params = jnp.ones(cluster.nb_edges)
+cluster.faces_params = jnp.full(cluster.nb_faces, 0.6)
+energy = make_energy_line_tensions_bounded(40.0)
+
+optimizer = BoundedBilevelOptimizer()
+optimizer.loss_function_inner = energy
+optimizer.inner_solver = optax.sgd(learning_rate=2e-3)
+optimizer.min_dist_T1 = 0.025
+optimizer.max_nb_iterations = 6000
+optimizer.tolerance = 0.0
+optimizer.inner_optimization(cluster)
+
+# Edge 4 gets a tension that breaks the triangle inequality at its vertices: it collapses.
+cluster.edges_params = cluster.edges_params.at[4].set(3.0)
+optimizer.max_nb_iterations = 300
+
+for reset in (None, T1TensionReset()):
+    trial = BoundedMesh.copy_mesh(cluster)
+    optimizer.t1_tension_reset = reset
+    optimizer.inner_optimization(trial)
+    print(f"t1_tension_reset={reset}: tension of edge 4 after the relaxation {float(trial.edges_params[4]):.2f}")
+    if reset is not None:
+        flips = np.asarray(optimizer.last_t1_resets.flips[0])
+        print("T1 transitions per edge:", {int(e): int(flips[e]) for e in np.nonzero(flips)[0]})
+
+# The length of the reopened edge is a keyword of the T1 function: pass it with functools.partial.
+margin = functools.partial(update_T1_bounded, reopen_margin=0.2)
+(vt, at, ht, ft), history = inner_opt_bounded(
+    cluster.vertices, cluster.angles, cluster.edges, cluster.faces,
+    cluster.vertices_params, cluster.edges_params, cluster.faces_params,
+    energy, optax.sgd(2e-3), 0.025, 300, 0.0, 5, update_T1_func=margin)
+print("with reopen_margin=0.2: energy after 300 iterations", float(history[-1]))
+```
+
+The cluster has 12 cells and edge 4 is an interior edge. Without the option, the new edge keeps the
+tension of 3 of the edge it replaces. With it, one T1 transition is accepted on edge 4 and the new
+edge starts at the mean tension of the other interior edges, here 1.
 
 ## Vertex labels and targets
 
