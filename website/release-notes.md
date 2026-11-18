@@ -3,6 +3,54 @@
 What each release changes for a user, and what you may have to change in your own code. The
 [changelog](changelog.md) has the full list.
 
+## Unreleased
+
+One library for the paper, its figure code and the documentation. The features that the figure code of the
+VertAX paper uses, and that only its branch had, are merged in; the image costs leave the library; the
+Hessian-weighted cost of the paper enters it. Without the new options, results are those of 0.3.0 with the
+fixes below.
+
+**New: the Hessian-weighted cost $\mathcal C_W$ and the staged schedule.** `make_cost_hessian_weighted(target, energy)`
+is $\mathcal C_W=\tfrac12\lVert\widehat{\mathbf H}(\mathbf X-\mathbf X_{\text{target}})\rVert^2$, with
+$\widehat{\mathbf H}$ the Hessian of the energy at the target (`hessian_at_target`), every edge parameter set
+to one, divided by its spectral norm. `switch_cost_at_target_topology(optimizer, mesh, cost)`, called after
+every epoch, disables T1 transitions and sets the cost at the first epoch where the mesh has the target
+topology: the second stage of the staged schedule, $\mathcal C_{\text{v2v}}$ then $\mathcal C_W$. The
+cost is tested against the definition used for the paper's Figure 3. See [Costs](user-guide/costs.md).
+
+**New, for bounded meshes, from the paper's branch.**
+
+- `T1TensionReset`, off by default: the edge created by a T1 transition starts at the mean tension of the
+  other edges of its kind, instead of inheriting the tension of the edge it replaces. Set it as
+  `BoundedBilevelOptimizer.t1_tension_reset`; `last_t1_resets` reports what it did. With the option, the four
+  `outer_*_bounded` functions return a `T1ResetReport` as an **eighth** value, and `update_T1_bounded`
+  returns the post-reset parameters and the transitions per edge. See
+  [T1 transitions](user-guide/t1-transitions.md#the-tension-of-the-new-edge).
+- `reopen_margin`, a keyword of `update_T1_bounded`: the reopened edge has the length
+  `(1 + reopen_margin) * min_dist_T1`, as for the periodic `update_T1`. The default is unchanged
+  (`min_dist_T1 + 1e-3`).
+- `get_cluster_moments_bounded` (area, centroid and central second moments of a bounded cluster, arc caps
+  included), `aspect_ratio_along_x`, `aspect_ratio_principal`, and the outer costs
+  `make_cost_aspect_ratio_along_x` and `make_cost_aspect_ratio`. See
+  [Costs](user-guide/costs.md#bounded-design-costs).
+
+**Removed: the image costs.** `cost_dmic`, `make_cost_dmic`, `render_interface_image`, `cost_mesh2image`,
+`make_cost_mesh2image`, `erode_mask_for_psf` and the constant `LEGACY_PSF_SIGMA` are gone, with their tests,
+their README section and their documentation pages; they are kept on the branch `image-cost` of the
+repository. The outer-cost signature keeps its last argument, `image_target`, which no cost of the library
+uses now: a cost you write still takes twelve arguments. The mask tools of `vertax.mask_analysis` and
+`vertax.trace` stay.
+
+**Fixed since 0.3.0.**
+
+- The line search scores the vertex steps capped and the bounded arc angles clipped, as the update leaves
+  them.
+- L-BFGS: the stored positions follow the vertices that the periodic wrap brings back into the box.
+- Bounded meshes: `reset_solver_on_t1`, an opt-in reset of the solver state after a T1 transition;
+  `update_T1_bounded` skips the triangular-twin-face emergency when the twin half-edge is an arc.
+- The bounded inverse regression test runs on a clipped-SGD outer step, with a reference regenerated on
+  Linux.
+
 ## 0.3.0 (2026-10-28)
 
 Four fixes and docstring corrections. It is a minor release rather than a patch: the first fix
@@ -86,9 +134,10 @@ Changes since the merge base `ed504f2`.
 - With a line-search inner solver (`gd_linesearch`, `cg_linesearch`, `optax.lbfgs()`), each vertex
   step is now capped at `5 * min_dist_T1` by default. Set `cap_vertex_step = False` on the optimizer
   to get the previous behaviour. Fixed-step solvers (`optax.sgd`, `optax.adam`) are not affected.
-- `cost_v2v` follows the published formula, and `cost_dmic` the published interface-density model,
-  so their values differ from earlier versions. The former IAS cost family and the unused topology
-  costs are removed, and `d_ias` is renamed `d_topo`.
+- `cost_v2v` follows the published formula, and the image-based cost of that release the published
+  interface-density model, so their values differ from earlier versions (the image costs have been removed
+  since, see above). The former IAS cost family and the unused topology costs are removed, and `d_ias`
+  is renamed `d_topo`.
 - Centered equilibrium propagation was corrected: the free phase is solved at `-beta`.
 
 ### New
@@ -98,8 +147,6 @@ Changes since the merge base `ed504f2`.
 - `params_normalization` on the bilevel optimizers, a mean-value constraint on any parameter array;
   `mean_tension_gauge` remains as an alias for the edge parameters.
 - `make_energy_shape_factor(lambda_area)`, the shape-factor energy with an area stiffness.
-- `make_cost_dmic`, and options of `render_interface_image`: intensity normalization, pixel-footprint
-  averaging and the PSF width as a call-time parameter.
 - Opt-in options of the relaxation: `minimize(..., reset_solver_on_t1=True)`,
   `minimize(..., count_t1=True)` and `recording_t1_statistics()`, `update_T1(..., reopen_margin=...)`,
   and `linesearch_initial_guess="one"` for `cg_linesearch` and `gd_linesearch`.
