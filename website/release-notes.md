@@ -34,12 +34,13 @@ cost is tested against the definition used for the paper's Figure 3. See [Costs]
   `make_cost_aspect_ratio_along_x` and `make_cost_aspect_ratio`. See
   [Costs](user-guide/costs.md#bounded-design-costs).
 
-**Removed: the image costs.** `cost_dmic`, `make_cost_dmic`, `render_interface_image`, `cost_mesh2image`,
-`make_cost_mesh2image`, `erode_mask_for_psf` and the constant `LEGACY_PSF_SIGMA` are gone, with their tests,
-their README section and their documentation pages; they are kept on the branch `image-cost` of the
-repository. The outer-cost signature keeps its last argument, `image_target`, which no cost of the library
-uses now: a cost you write still takes twelve arguments. The mask tools of `vertax.mask_analysis` and
-`vertax.trace` stay.
+**Removed: the image costs.** The interface-density cost and its factory, the rendering of an interface
+image from a mesh, the mesh-to-image cost and its factory, the erosion of a mask for the point-spread
+function and the constant for its legacy width are gone, with their tests, their README section and their
+documentation pages; the [changelog](changelog.md) lists them by name. They are kept on the branch
+`image-cost` of the repository. The outer-cost signature keeps its last argument, `image_target`, which no
+cost of the library uses now: a cost you write still takes twelve arguments. The mask tools of
+`vertax.mask_analysis` and `vertax.trace` stay.
 
 **Fixed since 0.3.0.**
 
