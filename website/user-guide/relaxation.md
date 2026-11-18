@@ -75,6 +75,12 @@ print(f"{len(history)} iterations, energy {history[0]:.4f} -> {history[-1]:.4f}"
 print("residual after:", force_residual(mesh))
 ```
 
+For a bounded mesh the relaxation function is [`inner_opt_bounded`][vertax.opt_bounded.inner_opt_bounded].
+It takes `cap_vertex_step` and `reset_solver_on_t1` (which re-initializes the solver state at the new
+vertex positions and arc angles after a T1 transition) as `minimize` does, and `tension_reset`, which
+sets the tension of an edge created by a T1 transition (see [T1 transitions](t1-transitions.md#the-tension-of-the-new-edge)).
+`BoundedBilevelOptimizer` exposes `cap_vertex_step` and `t1_tension_reset` as attributes.
+
 The `only_on_*` arguments restrict the energy to a subset of vertices, half-edges and faces, given as
 lists of indices.
 
@@ -161,6 +167,11 @@ recognized by the line-search state they carry, and left alone for fixed-step so
 is read from the environment variable `VERTAX_MAX_VERTEX_STEP_FACTOR` when VertAX is imported. When
 you call `minimize` yourself, pass `cap_vertex_step=True` with a line-search solver: its default
 there is `False`.
+
+With the cap, the line search scores the step as the update leaves it: the capped vertex step and, for
+a bounded mesh, the arc angles clipped to their limits, so the energy it evaluates is that of the
+position the step reaches. For L-BFGS on a periodic mesh, the stored positions follow the vertices
+that the periodic wrap brings back into the box.
 
 After a T1 transition, the state of a line-search solver (the conjugate direction, or the curvature
 pairs of L-BFGS) describes the old topology. `minimize(..., reset_solver_on_t1=True)` resets the
