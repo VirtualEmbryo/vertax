@@ -4,7 +4,7 @@
 
 [![preprint](https://img.shields.io/badge/preprint-green)](https://arxiv.org/abs/2604.06896)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Documentation](https://img.shields.io/badge/documentation-green)](https://html-preview.github.io/?url=https://github.com/VirtualEmbryo/vertax/blob/main/docs/vertax.html)
+[![Documentation](https://img.shields.io/badge/documentation-green)](https://virtualembryo.github.io/vertax/)
 
 <!-- PyPI badge removed 2026-08-15: `vertax` / `vertAX` are both unregistered on PyPI
      (pypi.org/pypi/vertax/json returns HTTP 404), so the badge rendered as "unknown" and
@@ -108,6 +108,18 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
+### From GitHub, at a release
+
+```sh
+pip install "vertax @ git+https://github.com/VirtualEmbryo/vertax@v0.4.0"
+```
+
+or, in a project managed with `uv`:
+
+```sh
+uv add "vertax @ git+https://github.com/VirtualEmbryo/vertax@v0.4.0"
+```
+
 ### From source
 
 ```sh
@@ -209,7 +221,7 @@ accuracy.
 
 ## API Reference
 
-See the [documentation](https://html-preview.github.io/?url=https://github.com/VirtualEmbryo/vertax/blob/main/docs/vertax.html).
+See the [documentation](https://virtualembryo.github.io/vertax/).
 
 ---
 
@@ -363,24 +375,21 @@ For full inverse-modeling examples, see [Tutorials](#tutorials) section.
 
 ## Citing VertAX
 
-If you use _VertAX_ in your research, please cite:
+If you use VertAX in your research, please cite the preprint [arXiv:2604.06896](https://arxiv.org/abs/2604.06896):
 
-```
-
+```bibtex
 @misc{pasqui2026vertaxdifferentiablevertexmodel,
-            title={VertAX: a differentiable vertex model for learning epithelial tissue mechanics},
-            author={Alessandro Pasqui and Jim Martin Catacora Ocana and Anshuman Sinha and Matthieu Perez and Fabrice Delbary and Giorgio Gosti and Mattia Miotto and Domenico Caudo and Maxence Ernoult and Hervé Turlier},
-            year={2026},
-            eprint={2604.06896},
-            archivePrefix={arXiv},
-            primaryClass={cs.LG},
-            url={https://arxiv.org/abs/2604.06896},
+      title={VertAX: a differentiable vertex model for learning epithelial tissue mechanics},
+      author={Alessandro Pasqui and Jim Martin Catacora Ocana and Anshuman Sinha and Matthieu Perez and Fabrice Delbary and Giorgio Gosti and Mattia Miotto and Domenico Caudo and Maxence Ernoult and Hervé Turlier},
+      year={2026},
+      eprint={2604.06896},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2604.06896},
 }
 ```
 
-<!-- > Pasqui A., Catacora Ocana J.M., Sinha A., Perez M., Delbary F., Gosti G., Miotto M., Caudo D., Ruocco G., Ernoult M.\*, Turlier H.\* (2025). _VertAX: A Differentiable Vertex Model for Learning Epithelial Tissue Mechanics._ -->
-
-<!-- If a DOI or preprint becomes available, we also recommend citing that version. -->
+The same reference is in [`CITATION.cff`](CITATION.cff), which GitHub shows as "Cite this repository".
 
 ---
 
