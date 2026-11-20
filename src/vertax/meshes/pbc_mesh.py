@@ -122,7 +122,7 @@ class PbcMesh(Mesh):
 
         To do that, we perform a segmentation using Cellpose and we try to fill the holes.
         The result will probably be imperfect and it will always be better if you
-        provide directly a mask (with no holes) with the function "periodic_from_mask".
+        provide directly a mask (with no holes) with `PbcMesh.from_mask`.
 
         The mask is made periodic by mirroring its edges.
 

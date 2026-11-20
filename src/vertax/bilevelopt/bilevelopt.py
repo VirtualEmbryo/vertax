@@ -98,8 +98,8 @@ class _BilevelOptimizer:
 
         CAUTION: a parameter-space penalty is mis-scaled against a *filtered* hypergradient. If the
         inner solve is truncated or preconditioned, the data gradient carries the filter factor and
-        `grad R(theta)` does not, so the effective weight scales as 1/f_k. Do not use this to fix a
-        gauge -- use `mean_tension_gauge`. See `outer_optimization`."""
+        `grad R(theta)` does not, so the effective weight scales as 1/f_k. Do not use this to fix the
+        mean of a parameter -- use `params_normalization`. See `outer_optimization`."""
         self.ep_variant: EPVariant = EPVariant.CENTERED
         """Which EP finite-difference form to use (EQUILIBRIUM_PROPAGATION only).
         CENTERED (default) is second-order in beta; ONE_SIDED is first-order and is

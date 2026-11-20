@@ -160,7 +160,24 @@ def cost_ratio(
     _selected_faces: Array | None = None,
     _image_target: Array | None = None,
 ) -> Array:
-    """Cost that nudges a `BoundedMesh` to elongate along one axis while narrowing along the orthogonal axis."""
+    r"""Cost that nudges a `BoundedMesh` to elongate along one axis while narrowing along the orthogonal axis.
+
+    The cost is the squared distance of the aspect ratio to a fixed target,
+
+    $$
+    \mathcal{C} = \left( \frac{L}{S} - r_{\mathrm{target}} \right)^2 ,
+    $$
+
+    with ``r_target = TARGET_RATIO`` (a module constant, 2.0). ``L`` is the longest distance between
+    two vertices, and ``S`` is the extent of the vertices perpendicular to the axis through those two
+    vertices (the largest minus the smallest signed distance to that axis).
+
+    **This cost is not smooth.** The two vertices that define the long axis are selected with
+    ``argmax``, so the axis, and hence ``S``, jump when another pair of vertices becomes the farthest
+    pair, and ``S`` is a maximum minus a minimum over vertices. The gradient is that of the current
+    selection and is discontinuous at such changes. For a smooth aspect-ratio cost, built from the
+    second moments of the region the cluster covers, use `make_cost_aspect_ratio`.
+    """
     # Compute pairwise squared distances by broadcasting
     # diff shape: (n, n, d)
     diff = vertTable[:, None, :] - vertTable[None, :, :]
@@ -349,8 +366,9 @@ def topological_distance(
 
     An elementary T1 transition destroys exactly one contact and creates exactly one other, so it
     changes **two** upper-triangle entries. Therefore ``d_topo`` is always **even**, and
-    ``d_topo / 2`` is the number of T1 events separating the two topologies. (Verified against the
-    Figure-3 synthetic dataset, whose levels 0, 2, 4, 6, 8, 10 this function reproduces exactly.)
+    ``d_topo / 2`` is a **lower bound** on the number of T1 transitions that separate the two
+    topologies. The bound need not be reached: two tissues can differ by more T1 transitions than
+    their contacts show.
 
     **This is a measurement, not an objective.** It returns a Python ``int`` and provides no
     gradient, so it cannot be assigned to ``loss_function_outer``. Use it to quantify topological

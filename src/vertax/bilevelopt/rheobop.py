@@ -26,7 +26,7 @@ $$
       +\partial_{\bm\theta}\mathcal E(\mathbf X_-^{-\beta})\big)\Big]
 $$
 
-Four load-bearing facts, each of which has bitten this repository before:
+Four properties of the estimator that the implementation relies on:
 
 1. **The outer cost carries no** $\bm\theta$. $U$ is a linear functional of the vertex
    positions alone, so $\partial_{\bm\theta}\widehat{\mathcal C}|_{\mathbf X}=0$ *exactly* and
@@ -35,8 +35,7 @@ Four load-bearing facts, each of which has bitten this repository before:
    ``_compute_ep_grads`` differentiates $\mathcal E+\beta\mathcal C$, so a
    $\bm\theta$-dependent cost would lose its explicit term **silently**.
 2. **The** $\beta$ **convention is fixed**: nudges at $\pm\beta$, prefactor
-   $1/(2\beta)$. Never $\beta/2$ with prefactor $1/\beta$; no factor of two is
-   ever reintroduced.
+   $1/(2\beta)$, not $\beta/2$ with prefactor $1/\beta$.
 3. **Every nudged solve is warm-started from its own free equilibrium, and the** $+\beta$
    **and** $-\beta$ **solves start from the same point.** That pairing is what makes EP's
    residual error track the inner budget rather than $\beta$ — measured to be
@@ -47,19 +46,19 @@ Four load-bearing facts, each of which has bitten this repository before:
 
 The solver is **injected**, not chosen here
 -------------------------------------------
-A ``src`` module must not import from ``analysis/``, and the CG configuration this problem needs
-(``cg_linesearch`` wrapped for x64 dtype stability) currently lives in an analysis script. So
-``solver_factory`` is a caller-supplied zero-argument callable returning a fresh
-``optax.GradientTransformation``. ``minimize`` is called **directly** rather than through
-``inner_opt`` because ``inner_opt`` does not forward ``cap_vertex_step``, and a line-search solver
-with T1 enabled needs it: it chooses its own step and can otherwise move a vertex across whole cells
-in one iteration, breaking the incremental T1 detector.
+The library does not fix the configuration of the inner solver, which for this problem should be a
+line-search conjugate gradient in double precision. ``solver_factory`` is a caller-supplied
+zero-argument callable returning a fresh ``optax.GradientTransformation``. ``minimize`` is called
+**directly** rather than through ``inner_opt`` because ``inner_opt`` does not forward
+``cap_vertex_step``, and a line-search solver with T1 enabled needs it: it chooses its own step and
+can otherwise move a vertex across whole cells in one iteration, breaking the incremental T1
+detector.
 
 Choosing $\beta$: it scales as $a_0^2$, and this is not optional
 ---------------------------------------------------------------------------
 The cost is written on the compliance
 $\widehat J=(U_+-U_-)/(2a_0)$, so its curvature in $U$ carries a factor
-$1/(2a_0)^2$. At the frozen $a_0=7\times10^{-4}$ that is $5.1\times10^{5}$, while
+$1/(2a_0)^2$. At $a_0=7\times10^{-4}$ that is $5.1\times10^{5}$, while
 the drive mode's own stiffness is $\sum\hat c^2/J\approx4.3$. The nudge therefore **out-stiffens
 the tissue by four orders of magnitude at the conventional** $\beta=10^{-2}$: the nudged solve
 drives $\widehat{\mathcal C}$ to zero and the state moves by exactly the distance to the target,
@@ -73,7 +72,7 @@ $1/\beta$.
 i.e. $\beta=O(a_0^2)$ — here $\beta\lesssim8\times10^{-5}$. Use
 `ShearRheologyOptimizer.beta_upper_bound` to compute it, and **verify linearity by halving**
 $\beta$ and checking that the response halves. A pilot $\beta=0.01$, as used in
-``E2`` tension inference where the cost is not divided by a small amplitude, does not transfer.
+line-tension inference, where the cost is not divided by a small amplitude, does not transfer.
 
 Diagnostics are not optional
 ----------------------------
@@ -140,12 +139,12 @@ class ShearRheologyOptimizer:
             caller.
         mode: the drive mode. Re-reference it from the $a=0$ relaxed state at each outer epoch
             and treat it as a constant of the estimator *within* the epoch.
-        a0: drive amplitude, frozen by V4 before any design run.
+        a0: drive amplitude, chosen before a design run, small enough for the response to be linear.
         j_target: target compliance. **Derive it as** ``rheology.target_compliance(G_tgt, mode)``
             with ``G_tgt`` taken *on the measured forward curve*, so that
             $\widehat{\mathcal C}$ starts $O(1)$. Setting it to a bare constant makes
             $\beta\widehat{\mathcal C}$ comparable to the whole energy and the "nudge" is then a
-            large perturbation — measured, and it invalidated an earlier P5 test.
+            large perturbation
         beta: nudge magnitude. Code convention: solves at $\pm\beta$, prefactor
             $1/(2\beta)$.
         solver_factory: zero-argument callable returning a fresh optax solver for the inner solve.
@@ -345,7 +344,7 @@ class ShearRheologyOptimizer:
         return j, float((j / self.j_target - 1.0) ** 2)
 
     def beta_diagnostics(self, free, nudged_plus) -> dict[str, float]:  # noqa: ANN001
-        r"""The two numbers D2 requires to be logged at every outer step.
+        r"""The two numbers to log at every outer step, which check that the nudge is in the linear regime.
 
         ``rel_state_change`` must sit in $[10^{-4},10^{-2}]$ and ``beta_cost_over_energy``
         below $10^{-2}$. Outside those the "nudge" is either invisible or is a large

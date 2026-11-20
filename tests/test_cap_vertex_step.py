@@ -1,8 +1,8 @@
 """``cap_vertex_step`` on the bilevel optimizers: automatic for line-search solvers, passed to every relaxation.
 
 A line-search solver chooses its own step and can move a vertex across whole cells in one iteration,
-which defeats the incremental T1 detector and can turn a cell inside out; the area energy cannot push the
-cell back, because ``get_area`` and ``get_area_bounded`` return absolute values. Capping each per-step
+which defeats the incremental T1 detector and can turn a cell inside out (``get_area_bounded`` then
+returns a negative area; the periodic ``get_area`` returns an absolute value). Capping each per-step
 vertex displacement at ``MAX_VERTEX_STEP_FACTOR * min_dist_T1`` prevents it. Checked here:
 
 * the automatic choice (``cap_vertex_step = None``) is on for line-search solvers (``gd_linesearch``,
@@ -193,10 +193,11 @@ MIN_DIST_T1 = 0.01
 
 
 def _signed_areas(mesh: BoundedMesh) -> np.ndarray:
-    """Shoelace sum of the chord polygon of every face, with the sign of its traversal orientation.
+    """Signed area of the chord polygon of every face (shoelace sum; the arc caps are left out).
 
-    The orientation differs from face to face (``get_area_bounded`` takes the absolute value), so a cell is
-    inverted when this sum changes sign between two states of the same face.
+    ``get_area_bounded`` also returns a signed area, with the arc caps added. The sum here is
+    negative when a cell has been turned inside out, so a cell is inverted when it changes sign between two
+    states of the same face.
     """
     v, he, fa = np.asarray(mesh.vertices), np.asarray(mesh.edges), np.asarray(mesh.faces)
     n = len(v)
