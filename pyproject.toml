@@ -14,7 +14,7 @@ authors = [
 maintainers = [
   { name = "Herve Turlier", email = "herve.turlier@cnrs.fr" },
 ]
-# Contributors: Alessandro Pasqui, Matthieu Perez, Michael Corbeau, Jim Catacora Ocana,
+# Contributors: Alessandro Pasqui, Matthieu Perez, Michael Corbeau, Jim Martin Catacora Ocana,
 # Anshuman Sinha, Hervé Turlier. Attribution is kept as a group here and in AUTHORS so that it does not
 # have to be re-ranked; see https://www.turlierlab.com.
 readme = "README.md"
