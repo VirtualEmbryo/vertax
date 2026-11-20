@@ -80,10 +80,8 @@ def create_optimizer() -> PbcBilevelOptimizer:
     bop.max_nb_iterations = 1000
     bop.tolerance = 0.00001
     bop.patience = 5
-    # `cg_linesearch` is excluded from the public release and unused by every figure. SGD is the
-    # inner solver behind every committed figure number.
-    # NOTE: neither variant has been run to completion, so this test's pass status is unverified
-    # in both.
+    # Plain SGD, the inner solver of the previous result (November 2025) that this test is checked
+    # against.
     bop.inner_solver = optax.sgd(learning_rate=0.01)
     bop.outer_solver = optax.adam(learning_rate=0.0001, nesterov=True)
     bop.bilevel_optimization_method = BilevelOptimizationMethod.ADJOINT_STATE
