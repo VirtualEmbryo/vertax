@@ -99,11 +99,10 @@ for epoch in range(1, 21):
         report(epoch)
 ```
 
-`error/spread` is the norm of the difference between the recovered and the true tensions, both
-centered, divided by the spread of the true tensions; the practical guide
-`docs/tension_inference_guide.md` of the repository explains why it is a better measure than a
-relative error. Twenty epochs are far from enough to recover the tensions: the guide's runs use
-hundreds.
+`error/spread` is the recovery error $\varepsilon$ of the paper: the norm of the difference between
+the recovered and the true tensions, both centered, divided by the spread of the true tensions. The
+practical guide `docs/tension_inference_guide.md` of the repository says what to report with it.
+Twenty epochs are far from enough to recover the tensions: the runs of the paper use hundreds.
 
 ## Other costs for tension inference
 

@@ -1,12 +1,8 @@
 # Practical guide to tension inference with VertAX
 
-What to set, what to report, and which conclusions from a bilevel run are trustworthy.
+What to set, what to report, and what the paper and its Supplementary Information show about line-tension inference on periodic tissues.
 
-Everything below was established by measurement on periodic 20-cell meshes at `K_areas = 10` during
-the 2026-08 analysis campaign. It is written for someone using the library, not for someone
-reproducing the paper; the quantitative provenance is in the manuscript's Figure 3 and its
-Supplementary Information. Where a number is quoted, it is the measured value on that benchmark set,
-not a general law.
+The numbers below are those of the benchmark of Figure 3 of the paper: synthetic periodic tissues of 20 cells with 60 line tensions $\gamma$, area stiffness $K = 10$, five meshes, medians. They are measured values on that benchmark, not general laws. Section names refer to the Supplementary Information.
 
 ---
 
@@ -41,7 +37,7 @@ def energy_inner(vertTable, heTable, faceTable, vert_params, he_params, face_par
 # ---- the optimizer ----------------------------------------------------------------------
 bop = PbcBilevelOptimizer()
 bop.loss_function_inner = energy_inner
-bop.loss_function_outer = cost_v2v
+bop.loss_function_outer = cost_v2v                         # plain vertex matching; see section 5
 bop.vertices_target     = target.vertices
 
 bop.inner_solver = optax.sgd(learning_rate=0.01)          # inner mechanical relaxation
@@ -51,172 +47,116 @@ bop.bilevel_optimization_method = BilevelOptimizationMethod.EQUILIBRIUM_PROPAGAT
 bop.max_nb_iterations = 1000       # the inner-solve iteration cap, "k" below -- see section 3
 bop.tolerance = 1e-5
 bop.patience = 5
-bop.mean_tension_gauge = 1.0       # NOT the default; see section 2 -- omitting it is a mistake
+bop.mean_tension_gauge = 1.0       # off by default; the paper's runs set it, see section 2
 
 bop.do_n_bilevel_optimization(nb_epochs=500, mesh=mesh)
 ```
 
 Two defaults worth knowing:
 
-* **`mean_tension_gauge` (the mean-tension normalization constraint) defaults to `None`, i.e. off.** Leaving it off makes tension error
-  meaningless (section 2).
-* **`ep_variant` defaults to `EPVariant.CENTERED`**, which is correct. `ONE_SIDED` exists for
-  comparison; one-sided EP gradients bias *both* accuracy metrics, not only the error norm.
+* **`mean_tension_gauge` (the mean-tension normalization constraint) defaults to `None`, i.e. off.** The paper's line-tension runs impose it (section 2). Shape-factor inference and bounded design runs leave it off.
+* **`ep_variant` defaults to `EPVariant.CENTERED`**, the centered equilibrium-propagation estimator (nudges at $\pm\beta$) used in the paper. `ONE_SIDED` exists for comparison.
 
 ---
 
 ## 2. Fix the mean tension, and know that it is an assumption
 
-**The overall tension level is nearly unobservable** from geometry alone: the uniform direction is the
-least observable one by a wide margin (it is near-null, not exactly null). In a periodic mesh the
-mechanical Hessian additionally has an exact double-zero eigenvalue from the two global translational
-symmetries. Without pinning the overall level, the recovered tension vector wanders along the
-undetermined direction and the error norm is dominated by that drift — it inflated `err/spread` by
-roughly 25x on the runs measured here.
+**The overall tension level is nearly unobservable from geometry alone.** The softest singular direction of the force-balance matrix $\mathbf M$ has $\sigma\approx0.019$, two orders of magnitude below the largest and 25 times below the next one, and overlaps the uniform vector $\mathbf 1/\sqrt n$ with an inner product of 0.985 (section "Normalization and regularization of the inferred tensions"). Determining it as precisely as the best-conditioned direction would take of the order of $10^4$ times more data. In a periodic mesh the Hessian also has two exact zero eigenvalues, the rigid translations.
 
-VertAX fixes it with a **mean-tension normalization constraint**, a post-step additive projection, applied after every outer step for every
-gradient estimator:
+VertAX fixes the overall level by the **mean-tension normalization**, a post-step additive projection applied after every outer step for every gradient estimator:
 
 ```
-Lambda  <-  Lambda - (mean(Lambda) - 1)
+gamma  <-  gamma - (mean(gamma) - 1)
 ```
 
-Set `bop.mean_tension_gauge = 1.0` to enable it.
+Set `bop.mean_tension_gauge = 1.0` to enable it. It adds no term to the gradient, so it cannot be mis-scaled against a filtered hypergradient.
 
-**The additive convention is deliberate, and it differs from the force-inference literature**, which
-normalises *multiplicatively* (`Lambda -> a * Lambda`). Multiplicative rescaling is equivalent to
-`K -> K/a`, so it trades against the area stiffness instead of being near-invariant. If you compare
-against results from that literature, state which convention you are using — a reader will otherwise
-assume the other one.
+**It is a constraint, not a symmetry.** A uniform shift $c\mathbf 1$ of the tensions changes the force by $c\,\mathbf M\mathbf 1$, which is of the same order as the tension force itself ($\lVert\mathbf M\mathbf 1\rVert = 1.40$–$1.72$ against $\lVert\mathbf M\boldsymbol\gamma\rVert = 1.04$–$1.55$ on the benchmark meshes). The exact invariance of the problem is the joint rescaling $(K,\boldsymbol\gamma)\to a(K,\boldsymbol\gamma)$. Rescaling the tensions alone at fixed $K$ is equivalent to $K\to K/a$ and is not an invariance. In the benchmark the ratio of the two force scales is fixed by the data, so the multiplicative scale is pinned.
 
-**This is an assumption supplied from outside the data, not bookkeeping.** Fixing `mean(Lambda) = 1`
-injects the true value of one direction out of 60 — and it is the *worst-conditioned* direction, the
-one that would need about 100x more data to determine than the best-conditioned one. It is
-legitimate and standard, but it must be stated.
+**The additive convention differs from classical force inference**, which normalizes the tensions by a common factor and lets the pressures carry a free offset. If you compare with results from that literature, state which convention you use.
 
-**On real data there is no ground-truth mean.** Fixing the mean to 1 is then not available, so any
-error metric must be **centered**: subtract the mean from both the recovered and the reference
-tensions before comparing. Reporting an uncentered error against real images silently credits the
-method with an assumption it was not given.
+**It is an assumption supplied from outside the data.** Fixing $\bar\gamma = 1$ injects the value of the least observable direction, known here because the benchmark was built with that mean. Fixing the mean is preferable to fixing a single reference edge, which would tie the whole solution to the noise of one measurement.
+
+**The recovery error does not depend on the normalization if both tensions are centered.** The paper's recovery error $\varepsilon$ (section 4) subtracts the mean of the true tensions in its denominator, and the comparisons of Figure 4 center both the estimated and the reference tensions, so that $\varepsilon$ does not depend on how each method fixes the mean.
 
 ---
 
-## 3. The inner-solve iteration cap `k` buys efficiency, not accuracy
+## 3. The inner-solve iteration cap $k$
 
-Truncating the inner mechanical solve acts as a **spectral (Landweber) regulariser**: it caps the
-amplification of the soft modes of the equilibrium map. The practical consequence is worth stating
-plainly, because the natural guess is wrong:
+Truncating the inner mechanical relaxation at $k$ steps acts as a **spectral (Landweber) regularization** of the differentiated map: a mode of stiffness $\lambda$ is amplified by $[1-(1-\eta\lambda)^k]/\lambda$ instead of $1/\lambda$, which caps the amplification of the soft modes at $t = k\eta$ (section "Truncation of the inner solve as spectral regularization"). The closed form is for gradient descent as the inner solver.
 
-> **Truncation buys roughly 150x less inner work at matching accuracy. It does not buy accuracy.**
+How much of that filter a run inherits depends on **the gradient estimator**. Ratio of the recovery error $\varepsilon$ at $k = 1000$ to its value at $k = 6$ (plain vertex-matching cost, five meshes, medians at epoch 350):
 
-How much of that filter a run inherits depends on **which gradient estimator** is used, and the
-ordering *is* the mechanism. Measured as the ratio of `err/spread` between the most- and
-least-truncated ends of the `k` ladder:
-
-| estimator | swing (max/min) | why |
+| estimator | $\varepsilon$ at $k=1000$ / $\varepsilon$ at $k=6$ | why |
 |---|---|---|
-| AD (unrolled) | **50.6x** | differentiates the truncated solver, inherits the filter in full |
-| Adjoint-ID | **8.7x** | inherits it only through the state at which the adjoint is evaluated |
-| EP (paired difference) | **5.4x** | differences two solves from the same point; the filter largely cancels |
+| AD (unrolled) | **108** | differentiates the truncated solver and inherits the filter in full |
+| Adj-ID | **13** | inherits it only through the state at which the adjoint system is evaluated |
+| EP (paired difference) | **5.2** | both nudged solves are truncated from the same point, so the filter largely cancels |
 
-EP's insensitivity is **relative, not immunity** — 5.4x is still an order-of-magnitude-scale effect.
-EP is also the only one of the three that is **non-monotone in `k`**, with a minimum at `k = 20`:
-it cannot inherit the filter's benefit but still pays truncation's first-order cost.
+EP is less sensitive to $k$ than the other estimators, but not insensitive: its error still changes 5.2-fold along the ladder. It is also the only estimator whose error is not monotone in $k$, with its minimum at $k = 20$.
 
-**Do not stack truncation with a Hessian-weighted cost** expecting the gains to add. On the primary
-metric they interfere, and they hurt both estimators measured — the two corrections target the same
-ill-conditioning.
+Truncation also reduces the inner work: an epoch at $k = 6$ does 167 times less inner work than at $k = 1000$. For AD it brings the Pearson correlation from 0.7245 to 1.0000; for EP only to $\varepsilon = 0.10$–$0.13$ (Pearson 0.99).
+
+**With the Hessian-weighted cost the best $k$ is not the same** (section 5): for AD and EP, $\varepsilon$ is 2.5 and 2.3 times larger at $k = 6$ than at $k = 1000$ (0.0487 against 0.0195, and 0.0493 against 0.0214), whereas Adj-ID is more accurate at $k = 6$ (0.0090 against 0.0185). Truncation and the Hessian-weighted cost both address the same ill-conditioning, so their effects do not add.
 
 ---
 
-## 4. Report `err/spread`, and check equilibrium first
+## 4. Report the recovery error $\varepsilon$ and the Pearson correlation
 
-**Primary metric.** Use the spread-normalised error
+The recovery error is
 
 ```
-err/spread  =  || Lambda_hat - Lambda_target ||_2  /  || Lambda_target - mean(Lambda_target) ||_2
+epsilon  =  || gamma_hat - gamma_true ||_2  /  || gamma_true - mean(gamma_true) ||_2
 ```
 
-**The conventional mean-normalised relative error flatters by roughly twelvefold** and must not be
-compared against percentages quoted for other problems. On one representative run the same result
-reads `err/spread = 0.0213` but "relative error 0.178%"; for a weaker run, `0.6125` versus "5.30%".
-Report Pearson correlation as a secondary metric — it saturates near 1.0 well before the error norm
-becomes small, so it cannot substitute for `err/spread`.
+It is 0 for exact recovery and 1 for an estimate no better than the mean true tension. Report the Pearson correlation between inferred and true tensions beside it: it ranks the tensions, whereas $\varepsilon$ also measures their magnitude. The two are not interchangeable: in the truncation ladder, EP at $k = 6$ has a Pearson correlation of 0.9918 at $\varepsilon = 0.1287$.
 
-**Check `||grad_x E||` before interpreting any recovery number.** A tension estimate attached to an
-unconverged inner equilibrium is not a result. This is the single most common way to produce a
-confident wrong number with this library.
+Report the residual force $\lVert\nabla_{\mathbf X}\mathcal E\rVert$ of the relaxed state with the recovery error. A short inner solve stops before equilibrium (end-of-epoch residual $7.8\times10^{-3}$ at $k = 6$ and $2.6\times10^{-4}$ at $k = 1000$, AD), so the recovery error alone does not tell how close to equilibrium the run was.
 
 ---
 
-## 5. There is a hard accuracy floor
+## 5. Choice of the outer cost, and what bounds the accuracy
 
-For vertex noise of scale `sigma_eta`, the Cramér–Rao bound gives
+**The Hessian-weighted cost $\mathcal C_W$ is an outer cost, a loss, like the plain vertex-matching cost $\mathcal C_{\text{v2v}}$.** With $\mathbf e = \mathbf X^* - \mathbf X_{\text{target}}$,
 
-```
-std(Lambda_hat_i)  >=  sigma_eta / sigma_i(J_e)
-```
+$$
+\mathcal C_{\text{v2v}} = \tfrac12\lVert\mathbf e\rVert^2 \simeq \tfrac12\lVert\mathbf H^{+}\mathbf M\,\delta\boldsymbol\gamma\rVert^2,
+\qquad
+\mathcal C_W = \tfrac12\lVert\widehat{\mathbf H}\,\mathbf e\rVert^2 \simeq \tfrac12\lVert\mathbf M\,\delta\boldsymbol\gamma\rVert^2 ,
+$$
 
-where `sigma_i(J_e)` are the singular values of the map from tensions to equilibrium vertex
-positions. Consequences that save wasted effort:
+where $\mathbf H$ is the Hessian of the energy, $\mathbf M$ the force-balance matrix and $\delta\boldsymbol\gamma$ the tension error. To first order $\mathcal C_W$ is the residual of the force-balance problem at the target geometry. $\widehat{\mathbf H}$ is the Hessian at the target with every tension set to one, scaled to unit norm, so it needs no knowledge of the tensions being inferred. In VertAX it is built by `make_cost_hessian_weighted` and passed as `loss_function_outer`.
 
-* **No reweighting of a purely geometric objective beats this bound.** For i.i.d. vertex noise,
-  plain `cost_v2v` is already statistically efficient. Hessian weighting belongs in the optimization
-  **step**, not in the loss.
-* Accuracy improves only by lowering `sigma_eta`, raising `sigma_i(J_e)`, or accepting bias via a
-  prior.
-* A least-squares solve against the force-balance equations at the *known* target geometry recovers
-  tensions essentially exactly (Pearson `1.000000`, `err/spread` about `6.2e-5`). **The information
-  is present in the geometry.** Any shortfall three to four orders of magnitude above that floor
-  comes from the estimation pipeline — a truncated inner solve and the outer optimiser — not from an
-  ill-posed inverse problem.
+On the benchmark, $\operatorname{cond}(\mathbf M) = 4.08$ against $\operatorname{cond}(\mathbf H^{+}\mathbf M) = 51.4$ (mean-tension direction excluded), a factor 12.6 that comes from the area stiffness, not from force balance. For shape-factor inference ($\mathcal E_1$) the factor is 1.27 and $\mathcal C_W$ is not needed.
 
-**Why tensions are harder than shape factors.** Cell-level shape-factor inference enjoys about 4x
-data redundancy against about 1.33x for edge-level tensions, is parameterised per cell rather than
-per edge, and has a dimensionless stiffness ratio `K*sqrt(A_0)/mean(Lambda)` of order 1 rather than
-10. Expect tension inference to be the harder problem by a wide margin.
+**$\mathcal C_W$ belongs to a fixed topology.** $\widehat{\mathbf H}$ is assembled from a fixed edge set and grows as $1/\ell$ on an edge that shrinks towards a T1 transition, so $\mathcal C_W$ is unstable while the topology still has to change. The staged schedule uses $\mathcal C_{\text{v2v}}$ until the topology first matches that of the target, then disables T1 transitions and switches to $\mathcal C_W$ (`switch_cost_at_target_topology`).
+
+**The accuracy reference.** For vertices observed with isotropic Gaussian error of variance $\sigma_X^2$, an unbiased estimator of the tensions has covariance at least $\sigma_X^2(J^\top J)^{-1}$, with $J$ the sensitivity of the equilibrium to the tensions in the mean-zero subspace (section "Cramér–Rao bound for a geometric observation model"). The paper calls it a reference and not a floor, because it bounds unbiased estimators only: estimators with a prior on the tensions, which are biased, fall below it at the higher noise levels. Inferring $K$ jointly inflates the reference by a factor 1.09–1.22 (median 1.16).
+
+**Why tensions are harder than shape factors.** Shape factors are cell-level parameters and tensions are edge-level, so the geometry constrains the former with about 4 times the redundancy against about 1.33 times. The dimensionless stiffness ratio $\kappa \sim K(A^0)^{3/2}/\bar\gamma$ is of order 1 for $\mathcal E_1$ and about 10 for $\mathcal E_2$.
 
 ---
 
 ## 6. Two things that must be explicit
 
-**Always pass `K_areas` explicitly and assert it.** The factories require it as a positional
-argument precisely so the value is visible at the call site rather than buried in the library. A
-guard test (`tests/test_api_contracts_guard.py`) enforces that there is no hidden default. Note that
-the bare name `energy_line_tensions` **no longer exists** — it is produced by the factory
-`make_energy_line_tensions(K_areas)`. Any code or documentation calling `energy_line_tensions`
-directly is stale.
+**Always pass `K_areas` explicitly and assert it.** The factories require it as a positional argument so that the value is visible at the call site rather than buried in the library. A guard test (`tests/test_api_contracts_guard.py`) enforces that there is no hidden default. The bare name `energy_line_tensions` no longer exists: it is produced by the factory `make_energy_line_tensions(K_areas)`, and code that calls it directly is stale.
 
-**Do not use edge-to-edge or topological costs as tension estimators.** Any such cost is a strict
-information loss relative to a vertex-level cost — the cell-adjacency Laplacian has a large null
-space (18 dimensions on these meshes), and the estimated loss of Fisher information exceeds 96%.
-`topological_distance` and relatives are useful as *metrics* and as basin-selection heuristics for guiding T1
-transitions when only topological information is available. They are not estimators of tension.
+**The topological distance is a measurement, not an objective.** $d_{\text{topo}}$ (`topological_distance`) counts the cell contacts that differ between two tissues, and $d_{\mathrm{T1}} = d_{\text{topo}}/2$ is a lower bound on the number of T1 transitions that separate them. It is an integer and is never optimized: it labels the inference problems and decides when the staged schedule switches cost.
 
 ---
 
 ## 7. Topology
 
-When the initial and target meshes differ topologically, what degrades with topological distance is
-the **probability of resolving the topology within the epoch budget** — not the accuracy achieved
-once it is resolved, which is roughly flat in distance.
+When the initial and target tissues differ in topology, the staged schedule first has to reach the target topology.
 
-* **Crossing rate is indistinguishable across the three estimators** (21, 22 and 22 of 25 on the
-  benchmark set) — a spread within binomial noise at that sample size. Do not choose an estimator to
-  improve topological crossing.
-* **Budget is usually the binding constraint.** Of runs that failed to converge after reaching the
-  correct topology, about 92% are attributable to insufficient epochs. There is a usable design
-  threshold of roughly **340 epochs of refinement after the correct topology is first reached**:
-  below it, no run converged; above it, 15 of 17 did.
-* Never pool statistics across the frozen-topology `d_topo = 0` condition and topology-active runs.
-  They are different experimental conditions even though they can share a distance label.
+* **The share of runs that reach the target topology decreases with $d_{\mathrm{T1}}$, the accuracy of the runs that recover does not.** By epoch 900, 87, 93, 87, 73 and 73 % of the runs reach the target topology at $d_{\mathrm{T1}} = 1$ to 5. Among the runs that recover, the median $\varepsilon$ is 0.013–0.018 at every $d_{\mathrm{T1}}$ (Spearman correlation 0.02 over 94 runs).
+* **The estimators do not differ significantly in reaching the target topology by epoch 500** (AD 42, Adj-ID 36, EP 41 of 50 runs; paired exact tests, $p \ge 0.15$). By epoch 900 only the difference between Adj-ID and EP is significant ($p = 0.012$ uncorrected, 0.036 corrected for three comparisons).
+* **The topology must be frozen after the switch.** With T1 transitions left free after the switch to $\mathcal C_W$, the schedule recovers 4 of 25 runs at $d_{\mathrm{T1}} > 0$; with the topology frozen, 14 of 25 (EP, 5 instances per $d_{\mathrm{T1}}$, epoch 500). Vertex matching alone never recovers the tensions on these runs (median $\varepsilon$ 0.66–1.09).
+* **Failures after the switch exist.** With T1 transitions disabled, a shrinking edge cannot be relieved and may collapse; the relaxation then stops converging. Of the 150 staged runs of Figure 3, 30 reach the target topology without recovering the tensions.
+* Single runs are not reproducible bit for bit across processors, so rates over instances are more reliable than the outcome of one run. Do not pool statistics across the frozen-topology $d_{\mathrm{T1}} = 0$ condition and topology-active runs: they are different conditions.
 
 ---
 
-## Related documents
+## Further reading
 
-* `docs/technical/CODE_CORRECTIONS_2026-08-09.md` (in the manuscript project, **not** in this
-  repository) — the energy-convention corrections, why `K_areas` became explicit, and the removal of
-  the former topology-cost family.
-* The measured numbers behind this guide and the current limitations are kept with the manuscript
-  analysis, which is not part of this repository snapshot.
+The derivations and the measurements behind this guide are in the Supplementary Information of the paper (sections on the conditioning of parameter inference, the truncation of the inner solve and the normalization of the inferred tensions) and in the documentation website.

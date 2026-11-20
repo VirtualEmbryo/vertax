@@ -213,9 +213,8 @@ See the [`examples/`](examples) folder for in-depth examples:
 For **tension inference specifically** — which settings matter, which metric to report, and which
 conclusions from a run are trustworthy — see
 [`docs/tension_inference_guide.md`](docs/tension_inference_guide.md). It collects the practical
-results of the 2026-08 analysis campaign, including the mean-tension normalization constraint (which is **off by
-default** and must be set explicitly) and why truncating the inner solve buys efficiency rather than
-accuracy.
+results of the paper, including the mean-tension normalization constraint (which is **off by
+default** and must be set explicitly), the effect of truncating the inner solve and the choice of the outer cost.
 
 ---
 
