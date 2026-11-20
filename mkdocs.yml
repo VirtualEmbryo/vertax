@@ -1,4 +1,4 @@
-# The documentation website. Its sources are in `website/`; the pdoc pages in `docs/` are separate.
+# The documentation website. Its sources are in `website/`.
 # Build it with the `docs` dependency group:
 #     uv sync --group docs
 #     uv run mkdocs build --strict      # into site/, which is not tracked
