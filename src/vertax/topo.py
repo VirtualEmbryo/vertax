@@ -370,10 +370,8 @@ class T1TensionReset:
     tension enough for the old junction to collapse, the new one collapses too, and the pair flips
     back and forth, or the junction is held at the T1 length. With this option the new edge starts
     at the mean tension of the other edges of its own kind (interior edges for a new interior edge,
-    free-interface edges for a new free-interface edge), the same rule as Arzash, Liu and
-    Manning (Proceedings of the National Academy of Sciences 123(36), 2026, doi:10.1073/pnas.2532099123)
-    use against flip-back; physically, a new junction carries none of the tension built
-    up on the junction it replaces.
+    free-interface edges for a new free-interface edge). Physically, a new junction carries none of
+    the tension built up on the junction it replaces.
 
     The mean is taken over the tensions, not over their parameters. ``sigmoid_tensions`` must match
     the option of the same name of `make_energy_line_tensions_bounded`: with it, the parameters are
