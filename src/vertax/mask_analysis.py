@@ -7,7 +7,21 @@ from scipy.ndimage import distance_transform_edt, gaussian_filter
 from skimage.measure import label
 
 
-def segment(image: NDArray, save: bool = False, output_path: str = "segmented_image.tiff") -> NDArray:
+def _use_cuda_gpu() -> bool:
+    """Tell whether a CUDA GPU is available to PyTorch (Apple's GPU is never used)."""
+    try:
+        import torch
+    except ImportError:
+        return False
+    return bool(torch.cuda.is_available())
+
+
+def segment(
+    image: NDArray,
+    save: bool = False,
+    output_path: str = "segmented_image.tiff",
+    gpu: bool | None = None,
+) -> NDArray:
     """Segment given image using Cellpose.
 
     The result will be imperfect and it will always be better if you provide directly
@@ -17,6 +31,9 @@ def segment(image: NDArray, save: bool = False, output_path: str = "segmented_im
         image (NDArray): Image to segment.
         save (bool, optional): Whether to save the segmentation on disk. Defaults to False.
         output_path (str, optional): Where to save the segmentation on disk. Defaults to "segmented_image.tiff".
+        gpu (bool | None, optional): Device used by Cellpose. `None` (default) uses a CUDA GPU
+            when one is available and the CPU otherwise; Apple's GPU is never used by default,
+            because Cellpose fails on it. `True` and `False` force the GPU and the CPU.
 
     Returns:
         The segmented image.
@@ -29,7 +46,8 @@ def segment(image: NDArray, save: bool = False, output_path: str = "segmented_im
     # Blur the image with gaussian filter sigma 10
     blurred_image = gaussian_filter(image, sigma=10)
     # Segment the image using Cellpose's `cyto` model
-    model = models.Cellpose(model_type="cyto", gpu=True)
+    use_gpu = _use_cuda_gpu() if gpu is None else gpu
+    model = models.Cellpose(model_type="cyto", gpu=use_gpu)
     mask, _, _, _ = model.eval(blurred_image, channels=[0, 0], diameter=None)
     if save:
         # Save the resulting image
@@ -67,7 +85,7 @@ def refine(segmented_image: NDArray) -> NDArray:
     return expanded_mask
 
 
-def mask_from_image(image: NDArray) -> NDArray:
+def mask_from_image(image: NDArray, gpu: bool | None = None) -> NDArray:
     """Automatically create a mask from an image.
 
     Note that the result will be imperfect and the result will always be better if you provide
@@ -75,11 +93,14 @@ def mask_from_image(image: NDArray) -> NDArray:
 
     Args:
         image (NDArray): The original image.
+        gpu (bool | None, optional): Device used by Cellpose. `None` (default) uses a CUDA GPU
+            when one is available and the CPU otherwise (never Apple's GPU); `True` and `False`
+            force the GPU and the CPU.
 
     Returns:
         The corresponding mask.
     """
-    return refine(segment(image))
+    return refine(segment(image, gpu=gpu))
 
 
 def pad(mask: NDArray, save: bool = False, output_path: str = "padded_image.tiff") -> NDArray:

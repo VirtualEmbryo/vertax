@@ -16,7 +16,10 @@ with mirror images of itself, extracts vertices, edges and faces from the padded
 twice the size of the mask in each direction, because of the mirroring.
 [`PbcMesh.from_image`][vertax.meshes.pbc_mesh.PbcMesh.from_image]`(image)` first segments the image
 with Cellpose (`vertax.mask_analysis.mask_from_image`: a Gaussian blur, the `cyto` model, then the
-background is filled by growing the labels), then calls `from_mask`.
+background is filled by growing the labels), then calls `from_mask`. The argument `gpu` of `from_image`
+(and of `mask_from_image` and `segment`) sets the device of Cellpose: `None`, the default, uses a CUDA
+GPU when one is available and the CPU otherwise, never Apple's GPU, on which Cellpose fails; `True` and
+`False` force the GPU and the CPU.
 
 Their docstrings mark both as unsupported for real masks. The junction extraction keeps a triple of
 labels only where exactly one 2 x 2 window of pixels carries it, while a real junction is usually

@@ -26,6 +26,7 @@ One library for the paper, its figure code and the documentation: the features t
 
 ### Fixed since 0.3.0
 
+- `PbcMesh.from_image`, `mask_analysis.mask_from_image` and `mask_analysis.segment` take `gpu: bool | None = None`, the device of Cellpose: `None` uses a CUDA GPU when one is available and the CPU otherwise (never Apple's GPU, on which Cellpose fails), `True` and `False` force it. `segment` used to force the GPU.
 - The line search scores the vertex steps capped and the bounded arc angles clipped, as the update leaves them.
 - L-BFGS: the stored positions follow the vertices that `update_pbc` wraps across the periodic box.
 - Bounded meshes: opt-in reset of the solver state after a T1 transition (`reset_solver_on_t1`); `update_T1_bounded` skips the triangular-twin-face emergency when the twin half-edge is an arc.

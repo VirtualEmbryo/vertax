@@ -117,6 +117,7 @@ class PbcMesh(Mesh):
     def from_image(
         cls,
         image: NDArray,
+        gpu: bool | None = None,
     ) -> Self:
         """Create a rudimentary mesh with periodic boundary conditions from an image.
 
@@ -128,6 +129,9 @@ class PbcMesh(Mesh):
 
         Args:
             image (NDArray): The image which will act as a template for the mesh.
+            gpu (bool | None, optional): Device used by Cellpose for the segmentation. `None`
+                (default) uses a CUDA GPU when one is available and the CPU otherwise (never
+                Apple's GPU); `True` and `False` force the GPU and the CPU.
 
         Returns:
             The corresponding mesh.
@@ -153,7 +157,7 @@ class PbcMesh(Mesh):
             corner-lattice extraction here is the intended fix; it is deferred, and its three
             preconditions are recorded in the freeze checklist.
         """
-        return cls.from_mask(mask_from_image(image))
+        return cls.from_mask(mask_from_image(image, gpu=gpu))
 
     @classmethod
     def from_mask(  # noqa: C901

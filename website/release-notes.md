@@ -44,6 +44,9 @@ cost of the library uses now: a cost you write still takes twelve arguments. The
 
 **Fixed since 0.3.0.**
 
+- `PbcMesh.from_image`, `mask_from_image` and `segment` take `gpu: bool | None = None`, the device of
+  Cellpose. `None` uses a CUDA GPU when one is available and the CPU otherwise, never Apple's GPU, on
+  which Cellpose fails; `True` and `False` force it. `segment` used to force the GPU.
 - The line search scores the vertex steps capped and the bounded arc angles clipped, as the update leaves
   them.
 - L-BFGS: the stored positions follow the vertices that the periodic wrap brings back into the box.
