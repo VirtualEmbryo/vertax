@@ -177,7 +177,6 @@ markers = ["long: long-running or memory-hungry test, deselected by default (run
 [dependency-groups]
 dev = [
     "jupyterlab>=4.5.7",
-    "pdoc>=16.0.0",
     "pytest>=8.4.2",
     "pytest-timeout",
     "scalene>=1.5.55",
