@@ -4,7 +4,7 @@ type: software
 title: "VertAX"
 abstract: "A differentiable JAX-based framework for vertex modeling and inverse design of epithelial tissues."
 version: 0.4.0
-# date-released: set when the release is tagged
+date-released: "2026-11-21"
 license: GPL-3.0-or-later
 repository-code: "https://github.com/VirtualEmbryo/vertax"
 url: "https://virtualembryo.github.io/vertax/"

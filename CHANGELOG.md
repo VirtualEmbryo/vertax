@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 — <date to set when tagging>
+## 0.4.0 — 2026-11-21
 
 The library of the VertAX paper: the Hessian-weighted cost, bounded T1 tension reset and aspect-ratio costs enter, the image costs leave, and the line-search and L-BFGS fixes are included. A minor rather than a patch release: removing the image costs removes public functions, and the fixes change bounded and line-search results.
 
