@@ -54,7 +54,7 @@ zero-argument callable returning a fresh ``optax.GradientTransformation``. ``min
 can otherwise move a vertex across whole cells in one iteration, breaking the incremental T1
 detector.
 
-Choosing $\beta$: it scales as $a_0^2$, and this is not optional
+Choosing the nudge beta: it scales as the square of the amplitude, and this is not optional
 ---------------------------------------------------------------------------
 The cost is written on the compliance
 $\widehat J=(U_+-U_-)/(2a_0)$, so its curvature in $U$ carries a factor

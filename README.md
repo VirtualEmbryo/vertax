@@ -37,6 +37,8 @@ for vertex modeling and inverse design of epithelial tissues.
 
 ---
 
+**Documentation:** [virtualembryo.github.io/vertax](https://virtualembryo.github.io/vertax/) (user guide, examples and API reference).
+
 ## What is VertAX?
 
 Epithelial tissues dynamically reshape through local mechanical interactions among cells. Understanding, inferring, and designing these mechanics is a central challenge in developmental biology and biophysics. **VertAX** is a computational framework built to address this challenge.
