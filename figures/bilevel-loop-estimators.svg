@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Schematic of one epoch of the bilevel optimization and of the four gradient estimators. Hand-written; the
+     estimator hues and markers are those of scripts/make_doc_figures.py: AD #3953a4 circle, Sen-ID #8753FF triangle,
+     Adj-ID #ed2024 square, EP #0c8140 diamond. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="420" viewBox="0 0 780 420" font-family="DejaVu Sans, Verdana, Helvetica, Arial, sans-serif" font-size="13" fill="#333333">
+  <title>One epoch of the bilevel optimization, with the four gradient estimators</title>
+  <desc>The parameters theta set the energy; the relaxation finds the equilibrium X*; the cost compares it with the target; one of four estimators (AD, Sen-ID, Adj-ID, EP) gives the gradient of the cost with respect to theta; the outer solver takes a step and the mean-value constraints are applied, which gives the parameters of the next epoch.</desc>
+  <defs>
+    <marker id="flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,1 L10,5 L0,9 z" fill="#555555"/>
+    </marker>
+  </defs>
+  <rect width="780" height="420" fill="#ffffff"/>
+
+  <!-- Top row: parameters, relaxation, cost. -->
+  <g stroke="#333333" stroke-width="1" fill="#EEEBE3">
+    <rect x="26" y="35" width="180" height="80" rx="6"/>
+    <rect x="265" y="35" width="250" height="80" rx="6"/>
+    <rect x="580" y="35" width="170" height="80" rx="6"/>
+  </g>
+  <text x="116" y="66" text-anchor="middle" font-weight="bold">parameters θ</text>
+  <text x="116" y="86" text-anchor="middle" font-size="11">vertices_params,</text>
+  <text x="116" y="102" text-anchor="middle" font-size="11">edges_params, faces_params</text>
+  <text x="390" y="62" text-anchor="middle" font-weight="bold">relaxation (inner problem)</text>
+  <text x="390" y="84" text-anchor="middle" font-size="13" font-style="italic">X*<tspan font-style="normal" font-size="10" dy="4">θ</tspan><tspan dy="-4" font-style="normal"> ∈ argmin</tspan><tspan font-style="normal" font-size="10" dy="4">X</tspan><tspan dy="-4"> E</tspan><tspan font-style="normal">(</tspan>X<tspan font-style="normal">, θ)</tspan></text>
+  <text x="390" y="104" text-anchor="middle" font-size="12">with T1 transitions</text>
+  <text x="665" y="66" text-anchor="middle" font-weight="bold">cost</text>
+  <text x="665" y="88" text-anchor="middle" font-style="italic">C<tspan font-style="normal">(</tspan>X*<tspan font-style="normal" font-size="10" dy="4">θ</tspan><tspan dy="-4" font-style="normal">, target)</tspan></text>
+  <g stroke="#555555" stroke-width="1.3" fill="none">
+    <line x1="206" y1="75" x2="261" y2="75" marker-end="url(#flow)"/>
+    <line x1="515" y1="75" x2="576" y2="75" marker-end="url(#flow)"/>
+    <line x1="665" y1="115" x2="665" y2="166" marker-end="url(#flow)"/>
+  </g>
+
+  <!-- The four estimators. -->
+  <text x="30" y="160" font-weight="bold">gradient ∇<tspan font-size="10" dy="4">θ</tspan><tspan dy="-4"> C, by one of four estimators</tspan></text>
+  <g fill="#ffffff" stroke-width="1.6">
+    <rect x="30" y="172" width="172" height="112" rx="6" stroke="#3953a4"/>
+    <rect x="216" y="172" width="172" height="112" rx="6" stroke="#8753FF"/>
+    <rect x="402" y="172" width="172" height="112" rx="6" stroke="#ed2024"/>
+    <rect x="588" y="172" width="162" height="112" rx="6" stroke="#0c8140"/>
+  </g>
+  <!-- Markers: circle, triangle, square, diamond. -->
+  <circle cx="48" cy="192" r="6" fill="#3953a4"/>
+  <path d="M234,186 L241,198 L227,198 z" fill="#8753FF"/>
+  <rect x="414" y="186" width="12" height="12" fill="#ed2024"/>
+  <path d="M606,184 L614,192 L606,200 L598,192 z" fill="#0c8140"/>
+  <g font-weight="bold">
+    <text x="62" y="197" fill="#3953a4">AD</text>
+    <text x="248" y="197" fill="#8753FF">Sen-ID</text>
+    <text x="434" y="197" fill="#ed2024">Adj-ID</text>
+    <text x="620" y="197" fill="#0c8140">EP</text>
+  </g>
+  <g font-size="12">
+    <text x="40" y="222">differentiates through</text>
+    <text x="40" y="238">the iterations of the</text>
+    <text x="40" y="254">relaxation, in reverse</text>
+    <text x="40" y="270">mode (jax.grad)</text>
+    <text x="226" y="222">one linear solve per</text>
+    <text x="226" y="238">parameter, at the</text>
+    <text x="226" y="254">equilibrium:</text>
+    <text x="226" y="272" font-style="italic">H s<tspan font-size="9" dy="3" font-style="normal">j</tspan><tspan dy="-3" font-style="normal"> = −∂</tspan><tspan font-size="9" dy="3" font-style="normal">θj</tspan><tspan dy="-3" font-style="normal"> ∇</tspan><tspan font-size="9" dy="3" font-style="normal">X</tspan><tspan dy="-3"> E</tspan></text>
+    <text x="412" y="222">one linear solve, at</text>
+    <text x="412" y="238">the equilibrium:</text>
+    <text x="412" y="258" font-style="italic">H λ <tspan font-style="normal">= ∇</tspan><tspan font-size="9" dy="3" font-style="normal">X</tspan><tspan dy="-3"> C</tspan></text>
+    <text x="598" y="222">two relaxations of</text>
+    <text x="598" y="240" font-style="italic">E <tspan font-style="normal">± β</tspan> C<tspan font-style="normal">, then the</tspan></text>
+    <text x="598" y="256">difference of ∂<tspan font-size="9" dy="3">θ</tspan><tspan dy="-3" font-style="italic"> E</tspan></text>
+    <text x="598" y="272">divided by 2β</text>
+  </g>
+
+  <!-- Outer step and back to the parameters. -->
+  <g stroke="#333333" stroke-width="1" fill="#EEEBE3">
+    <rect x="265" y="318" width="250" height="72" rx="6"/>
+  </g>
+  <text x="390" y="345" text-anchor="middle" font-weight="bold">outer step</text>
+  <text x="390" y="364" text-anchor="middle" font-size="12">one step of outer_solver (Optax),</text>
+  <text x="390" y="380" text-anchor="middle" font-size="12">then params_normalization</text>
+  <g stroke="#555555" stroke-width="1.3" fill="none">
+    <line x1="390" y1="284" x2="390" y2="314" marker-end="url(#flow)"/>
+    <polyline points="265,354 12,354 12,75 22,75" marker-end="url(#flow)"/>
+  </g>
+  <text x="150" y="344" font-size="12" fill="#555555" text-anchor="middle">next epoch</text>
+</svg>
