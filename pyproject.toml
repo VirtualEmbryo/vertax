@@ -18,7 +18,7 @@ maintainers = [
 # Anshuman Sinha, Hervé Turlier. Attribution is kept as a group here and in AUTHORS so that it does not
 # have to be re-ranked; see https://www.turlierlab.com.
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
   "cellpose==3.1.0",
   "importlib-resources>=6.5.2",

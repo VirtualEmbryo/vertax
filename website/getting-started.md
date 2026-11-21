@@ -8,12 +8,13 @@ virtual environment:
 ```sh
 git clone https://github.com/VirtualEmbryo/vertax.git
 cd vertax
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 
-VertAX needs Python 3.11 or later. Its dependencies are listed in `pyproject.toml`, most of them
+VertAX needs Python 3.11 or 3.12: the versions of JAX, NumPy and Matplotlib it pins have no wheels for
+later Pythons. Its dependencies are listed in `pyproject.toml`, most of them
 with an exact version: JAX and jaxlib 0.4.34, Optax, JAXopt, NumPy, SciPy, Matplotlib, scikit-image,
 tifffile, pandas, importlib-resources and Cellpose.
 

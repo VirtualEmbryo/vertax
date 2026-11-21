@@ -10,6 +10,9 @@ VertAX paper uses, and that only its branch had, are merged in; the image costs 
 Hessian-weighted cost of the paper enters it. Without the new options, results are those of 0.3.0 with the
 fixes below.
 
+Python 3.11 or 3.12 only (`requires-python = ">=3.11,<3.13"`): JAX and jaxlib 0.4.34, NumPy 1.26.4 and
+Matplotlib 3.8.0, which this version pins, have no wheels for later Pythons.
+
 **New: the Hessian-weighted cost $\mathcal C_W$ and the staged schedule.** `make_cost_hessian_weighted(target, energy)`
 is $\mathcal C_W=\tfrac12\lVert\widehat{\mathbf H}(\mathbf X-\mathbf X_{\text{target}})\rVert^2$, with
 $\widehat{\mathbf H}$ the Hessian of the energy at the target (`hessian_at_target`), every edge parameter set

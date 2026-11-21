@@ -101,10 +101,11 @@ In other words, VertAX repeatedly solves a mechanical equilibrium problem for a 
 
 ## Installation
 
-We recommend installing VertAX in a virtual environment:
+VertAX needs Python 3.11 or 3.12: the versions of JAX, NumPy and Matplotlib it pins have no wheels for
+later Pythons. We recommend installing it in a virtual environment:
 
 ```sh
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 ```
 

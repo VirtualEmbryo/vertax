@@ -4,6 +4,9 @@
 
 The library of the VertAX paper: the Hessian-weighted cost, bounded T1 tension reset and aspect-ratio costs enter, the image costs leave, and the line-search and L-BFGS fixes are included. A minor rather than a patch release: removing the image costs removes public functions, and the fixes change bounded and line-search results.
 
+Python 3.11 or 3.12 only (`requires-python = ">=3.11,<3.13"`): JAX and jaxlib 0.4.34, NumPy 1.26.4 and
+Matplotlib 3.8.0, which this version pins, have no wheels for later Pythons.
+
 One library for the paper, its figure code and the documentation: the features that the VertAX paper's figure code uses and that only its branch had are merged in, the image costs leave the library, and the Hessian-weighted cost of the paper enters it. Without the new options, results are those of 0.3.0 with the fixes below.
 
 ### Added: the Hessian-weighted cost $\mathcal C_W$ and the staged schedule
