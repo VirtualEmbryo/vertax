@@ -89,6 +89,11 @@ print("cost_v2v:", float(cost_v2v(mesh.vertices, mesh.edges, mesh.faces, width, 
                                   target.vertices, target.edges, target.faces)))
 ```
 
+<figure markdown="span">
+  ![A relaxed periodic tissue drawn over its dashed target, with an arrow from each vertex to the target vertex of the same index](../figures/cost-vertex-to-vertex.svg)
+  <figcaption markdown="span">The relaxed tissue of the code above, its target (dashed) and the displacements $\mathbf x_i^{\text{target}} - \mathbf x_i$, drawn five times longer than they are, whose mean square, halved, is $\mathcal C_{\text{v2v}} = 1.1 \times 10^{-3}$.</figcaption>
+</figure>
+
 To first order, $\mathcal C_{\text{v2v}}$ is $\tfrac12\lVert\mathbf H^{+}\mathbf M\,\delta\boldsymbol\theta\rVert^2$
 for a parameter error $\delta\boldsymbol\theta$, where $\mathbf H$ is the Hessian of the energy and
 $\mathbf M$ the derivative of the forces with respect to the parameters. The soft modes of the tissue
@@ -304,6 +309,11 @@ even, and the paper reports
 $$
 d_{\mathrm{T1}} = d_{\text{topo}} / 2 .
 $$
+
+<figure markdown="span">
+  ![Two periodic tissues side by side; four shaded cells in each, with one purple edge between two of them in the first tissue and between the two others in the second](../figures/cost-topological-distance.svg)
+  <figcaption markdown="span">The starting tissue and the target one T1 transition away from the example of the staged schedule: two cells lose their contact (purple edge, left) and the two others gain one (right), so $d_{\text{topo}} = 2$ and $d_{\mathrm{T1}} = 1$.</figcaption>
+</figure>
 
 $d_{\mathrm{T1}}$ is a lower bound on the number of T1 transitions between two tissues. It is reached
 for every pair of tissues used in the paper, but it need not be in general. The function returns

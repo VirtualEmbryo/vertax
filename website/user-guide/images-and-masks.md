@@ -93,3 +93,8 @@ The mask read here is a test fixture of the repository; the path is relative to 
 
 A traced mesh is a patch with a boundary, not a periodic mesh, and VertAX has no function that turns
 it into a `PbcMesh` or a `BoundedMesh`. Its mechanics are those of [clamped patches](clamped-patches.md).
+
+<figure markdown="span">
+  ![A fluorescence image of an epithelium and the boundaries of its segmentation mask](../figures/image-and-mask.png) ![The traced mesh, with free vertices as circles and clamped vertices, on the border of the image, as squares](../figures/traced-mask.svg)
+  <figcaption markdown="span">`examples/image.tif`, the boundaries of its mask `examples/mask.tif`, and the mesh that `trace_mask_closed(regularize(mask)[0])` traces from the mask: 66 faces and 133 vertices, of which the 32 that touch the border of the field of view are clamped.</figcaption>
+</figure>

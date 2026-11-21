@@ -12,6 +12,11 @@ At every iteration, after the solver step, the periodic T1 update
 midpoint of the old one, and is given the length `(1 + reopen_margin) * min_dist_T1`, that is
 `1.1 * min_dist_T1` with the default `reopen_margin=0.1`.
 
+<figure markdown="span">
+  ![Two rows of three panels: four cells whose shared edge shrinks to the threshold and flips, inside the tissue and at the outline of a bounded mesh, where an inner cell reaches the outline](../figures/t1-transition.svg)
+  <figcaption markdown="span">A T1 transition inside the tissue (top) and at the outline of a bounded mesh (bottom): the purple edge shrinks to `min_dist_T1` and is replaced by an edge between the two other cells; read from right to left, the bottom row is the transition that takes a cell inside (schematic).</figcaption>
+</figure>
+
 On an optimizer, two attributes control this:
 
 - `update_T1` (default `True`): perform T1 transitions at all. With `False`, the topology never

@@ -75,6 +75,11 @@ The gradient of the cost with respect to the parameters goes through the equilib
 (automatic differentiation), Sen-ID and Adj-ID (implicit differentiation, in its sensitivity and its
 adjoint form) and EP (equilibrium propagation).
 
+<figure markdown="span">
+  ![Flow diagram: parameters, relaxation, cost, the four gradient estimators AD, Sen-ID, Adj-ID and EP, and the outer step that returns to the parameters](../figures/bilevel-loop-estimators.svg)
+  <figcaption markdown="span">One epoch of the bilevel optimization: the relaxation gives the equilibrium $X^\ast_\theta$, the cost compares it with the target, one of the four estimators gives $\nabla_\theta \mathcal C$, and the outer step updates the parameters (schematic).</figcaption>
+</figure>
+
 ### Automatic differentiation (AD)
 
 `AUTOMATIC_DIFFERENTIATION` relaxes the mesh from its current state and differentiates the cost of

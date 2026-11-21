@@ -1,0 +1,18 @@
+/* Figures are drawn on white. On the dark scheme they sit on a white plate with a small margin, so that
+   their colours, chosen for a white background, read the same in both schemes. */
+.md-typeset figure img {
+  background-color: #ffffff;
+  border-radius: 0.2rem;
+}
+
+[data-md-color-scheme="slate"] .md-typeset figure img {
+  padding: 0.4rem;
+}
+
+.md-typeset figure {
+  margin: 1.6em auto;
+}
+
+.md-typeset figcaption {
+  max-width: 40rem;
+}

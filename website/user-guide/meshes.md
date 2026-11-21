@@ -29,6 +29,11 @@ the two faces it separates. The tables are JAX arrays:
   below).
 - `width` and `height`: the size of the box.
 
+<figure markdown="span">
+  ![Hexagonal cells with a half-edge h of face f, its twin in face g, the next and previous half-edges, its source and target vertices, and a half-edge crossing the right side of a periodic box](../figures/mesh-half-edge-structure.svg)
+  <figcaption markdown="span">The half-edge tables: a half-edge `h` of face *f* and its twin in the neighbouring face *g*, the next and previous half-edges around *f*, the source and target vertices of `h`, and, for a periodic mesh, a half-edge whose target is stored on the other side of the box and read one box width further, as its offset (+1, 0) in columns 6 and 7 says (schematic).</figcaption>
+</figure>
+
 The properties `nb_vertices`, `nb_half_edges`, `nb_edges` (half the number of half-edges) and
 `nb_faces` give the sizes.
 

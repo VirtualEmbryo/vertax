@@ -22,6 +22,11 @@ is the displacement of vertex $i$ from that state, measured through the periodic
 response is the amplitude $U = \sum_i \hat c_i \Delta x_i / \sum_i \hat c_i^2$ of the displacement
 along the drive.
 
+<figure markdown="span">
+  ![Left, a periodic tissue with horizontal arrows on the vertices whose length follows a cosine of the height; right, the horizontal displacement of each vertex against its height, with a cosine curve](../figures/rheology-shear-drive.svg)
+  <figcaption markdown="span">The drive on the 20-cell tissue of the code below ($p_0 = 3.6$): the force $a\,\hat c_i$ on each vertex (left; arrows to scale with one another), and the displacements $\Delta x_i$ at $a = +a_0 = 0.02$ against the height $y^0_i$, with the mode at the measured amplitude $U = 0.038$ (right).</figcaption>
+</figure>
+
 - [`make_shear_mode`][vertax.rheology.make_shear_mode]`(vertices, width, height, n=1, mod_axis=1, pol_axis=0)`
   builds the mode, a [`ShearMode`][vertax.rheology.ShearMode], from the relaxed undriven vertices.
   `mod_axis` is the axis of the cosine (1 for $\cos(qy)$), `pol_axis` the direction of the force and

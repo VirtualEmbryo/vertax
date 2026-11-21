@@ -81,3 +81,8 @@ with enable_x64():
 The patch read here is the test fixture of the repository; the path is relative to the root of the
 clone. The energy is the one of the README: unit tensions on the cell-cell edges and
 an area term with stiffness `K`.
+
+<figure markdown="span">
+  ![A traced patch of about 30 cells, observed (dashed) and relaxed (solid), with free vertices as circles and clamped rim vertices as squares](../figures/clamped-patch-relaxation.svg)
+  <figcaption markdown="span">The test patch as observed (dashed) and relaxed with the energy of the code above ($K = 5$): the clamped vertices of the rim stay in place, and the residual over the free vertices falls from 0.86 to $2.5 \times 10^{-8}$.</figcaption>
+</figure>

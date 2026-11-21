@@ -55,6 +55,11 @@ cells of mean area 1.
   stiffness is closed over without conversion to a Python float, so it can be a traced array and be
   optimized; at `lambda_area = 1` the result is `energy_shape_factor_hetero`.
 
+<figure markdown="span">
+  ![Two relaxed periodic tissues of 64 cells coloured by shape index: at p0 = 3.5 the shape indices range from 3.7 to 4.4, at p0 = 3.9 they are all close to 3.9](../figures/energy-shape-index.svg)
+  <figcaption markdown="span">Relaxed 64-cell tissues of $E_1$ with every cell at the same $p_0$, coloured by the shape index $P/\sqrt{A}$: at $p_0 = 3.5$ the shape indices stay well above $p_0$ (3.70 to 4.43, $E_1 = 12.2$), at $p_0 = 3.9$ they gather around it (3.88 to 3.96, $E_1 = 0.008$); L-BFGS relaxations in `float64` to a force norm below $10^{-13}$.</figcaption>
+</figure>
+
 ```python
 import math
 

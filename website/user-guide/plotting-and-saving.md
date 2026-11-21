@@ -47,6 +47,11 @@ fig.savefig("areas_and_tensions.png")
 plt.close(fig)
 ```
 
+<figure markdown="span">
+  ![A periodic mesh drawn by plot_mesh with cells in random colours](../figures/plot-mesh-multicolor.svg) ![The same mesh with cells coloured by area, edges by tension and vertices in black, with two colour bars](../figures/plot-mesh-areas-tensions.svg)
+  <figcaption markdown="span">The two figures drawn by the code above, without their titles: the default `FacePlot.MULTICOLOR`, and areas, tensions and vertices with their colour bars.</figcaption>
+</figure>
+
 `get_plot_mesh` takes the same choices without the saving and color-bar options, and returns the
 figure and the axes.
 

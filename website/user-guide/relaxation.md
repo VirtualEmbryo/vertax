@@ -226,3 +226,8 @@ with enable_x64():
 ```
 
 With `tolerance=0.0` the loop never stagnates and runs all `iterations_max` iterations.
+
+<figure markdown="span">
+  ![The 20-cell tissue before and after 500 iterations of L-BFGS, and the energy and the force norm against iteration for optax.sgd, cg_linesearch and optax.lbfgs](../figures/relaxation-solvers.svg)
+  <figcaption markdown="span">The tissue of the code above before relaxation and after 500 iterations of L-BFGS, and, for the three solvers, the energy at every iteration and the force norm $\lVert\nabla_X E_1\rVert$ after 1, 2, 5, ..., 500 iterations: L-BFGS reaches $10^{-14}$, conjugate gradient $8 \times 10^{-8}$ and SGD $7 \times 10^{-2}$, and the three end in different minima (energies 0.62, 0.86 and 0.87).</figcaption>
+</figure>

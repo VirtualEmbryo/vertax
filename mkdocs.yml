@@ -10,6 +10,9 @@ repo_url: https://github.com/VirtualEmbryo/vertax
 copyright: Copyright 2025-2026 the VertAX authors. GPL-3.0-or-later.
 docs_dir: website
 site_dir: site
+# The list of the figures and their sources, for the repository; not a page of the site.
+exclude_docs: |
+  figures/README.md
 
 theme:
   name: material
@@ -27,6 +30,7 @@ theme:
 markdown_extensions:
   - admonition
   - attr_list
+  - md_in_html
   - tables
   - toc: {permalink: true}
   - pymdownx.details
@@ -34,6 +38,9 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.arithmatex: {generic: true}
   - pymdownx.snippets: {base_path: ["."], check_paths: true}
+
+extra_css:
+  - stylesheets/extra.css
 
 extra_javascript:
   - javascripts/mathjax.js
