@@ -34,6 +34,11 @@ for tol, m in by_tolerance.items():
     print(f"rim_tol {tol}: {m.n_verts} vertices, total interior area {sum(interior.values()):.1f} px^2")
 ```
 
+<figure markdown="span">
+  ![The same mask traced three times, with fewer rim vertices as rim_tol grows from 1 to 8 pixels](../figures/example-trace-rim-tolerance.svg)
+  <figcaption markdown="span">The fixture mask traced with `rim_tol` 1, 2 and 8 pixels: the rim has 433, 140 and 83 vertices, and the 36 free vertices are the same.</figcaption>
+</figure>
+
 Declaring a cell unmodelled removes it from the faces and clamps the vertices around it. This costs
 free vertices only when the cell was inside the patch:
 

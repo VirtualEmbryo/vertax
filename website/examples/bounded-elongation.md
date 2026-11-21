@@ -66,6 +66,11 @@ fig.savefig("elongation_after.png")
 arguments have defaults. The notebook runs ten epochs with a smaller learning rate, `1e-4`; the test
 runs three with `0.01`.
 
+<figure markdown="span">
+  ![The relaxed cluster and the same cluster after 5 epochs of design, edges coloured by tension](../figures/example-bounded-elongation.svg)
+  <figcaption markdown="span">The cluster before and after the 5 epochs of design of this page, edges coloured by tension: `cost_ratio` falls from 0.555 to 0.441.</figcaption>
+</figure>
+
 ## Other measures of elongation
 
 `cost_ratio` takes the longest distance between two vertices, so it changes abruptly when the farthest

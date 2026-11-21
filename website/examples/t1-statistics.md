@@ -58,6 +58,11 @@ for check in (False, True):
 Without the energy check, every presented edge is flipped. With it, a flip is kept only when it does
 not raise the energy.
 
+<figure markdown="span">
+  ![Two event plots against iteration: the edges presented to the T1 update and the flips kept, without and with the energy check](../figures/example-t1-counts.svg)
+  <figcaption markdown="span">The edges presented to the T1 update (grey bars) and the flips kept (dots) at each iteration of the 400-iteration relaxation of this page: 8 of 8 kept without the energy check, 8 of 12 with it.</figcaption>
+</figure>
+
 ## Under `jax.vmap`
 
 The counts are part of the state of the loop, so they stay exact when the relaxation is vectorized,

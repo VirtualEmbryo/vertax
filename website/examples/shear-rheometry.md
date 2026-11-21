@@ -115,3 +115,8 @@ Check the force residual of every state before trusting a compliance: a complian
 that are not at equilibrium is not a compliance. The design of a compliance with
 [`ShearRheologyOptimizer`](../user-guide/rheology.md#designing-a-compliance) repeats such relaxations
 at every epoch; the tests of the repository construct it, but none runs an epoch.
+
+<figure markdown="span">
+  ![Vertex displacements against the drive weights at plus and minus a0, along two straight lines of opposite slopes](../figures/example-shear-compliance.svg)
+  <figcaption markdown="span">The displacement of each vertex along the drive against its weight $\hat c_i$, at $+a_0$ (filled) and $-a_0$ (open), in the last section of this page; the lines have the slopes $U_+ = 0.0379$ and $U_- = -0.0381$, so $J = 1.90$.</figcaption>
+</figure>

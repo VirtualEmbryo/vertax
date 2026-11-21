@@ -79,3 +79,8 @@ fig.savefig("periodic_relaxation.png")
 The relaxation stops on its tolerance and patience rule, not on a small force residual. The test
 records that its reference stops at `residual / energy = 0.246`, and checks that a new run stops no
 worse than that, with the same histogram of edges per face and the same energy within 0.1 %.
+
+<figure markdown="span">
+  ![A 100-cell periodic tissue before and after relaxation, cells coloured by area](../figures/example-periodic-relaxation.svg)
+  <figcaption markdown="span">The 100 cells before and after the relaxation of this page, which stops at 1000 iterations, the maximum; the cells are coloured by area on the same scale.</figcaption>
+</figure>

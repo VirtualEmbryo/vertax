@@ -132,3 +132,8 @@ agree with each other. None of these is the gradient at an equilibrium: automati
 equilibrium propagation work on relaxations that are far from converged, and the implicit estimators
 apply the optimality condition at a state where it does not hold. Relax to equilibrium, and check the
 force residual, before trusting an estimate.
+
+<figure markdown="span">
+  ![Left, the 16 gradient components from the four estimators, which coincide; right, the norms of the four estimates from the equilibrium, close together, and from the unrelaxed tissue, spread over eleven decades](../figures/example-gradient-estimators.svg)
+  <figcaption markdown="span">The two runs of this page: from the equilibrium, the four estimates of the 16 components coincide (left); from the unrelaxed tissue, their norms spread from $10^{-2}$ to $10^{9}$ (right, open markers).</figcaption>
+</figure>

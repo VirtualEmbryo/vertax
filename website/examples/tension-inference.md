@@ -104,6 +104,11 @@ the recovered and the true tensions, both centered, divided by the spread of the
 practical guide `docs/tension_inference_guide.md` of the repository says what to report with it.
 Twenty epochs are far from enough to recover the tensions: the runs of the paper use hundreds.
 
+<figure markdown="span">
+  ![Left, the cost decreasing over 20 epochs; right, recovered against target tensions at epoch 0 and epoch 20, scattered far from the diagonal](../figures/example-tension-inference.svg)
+  <figcaption markdown="span">The script of this page: over 20 epochs the cost falls from $3.2 \times 10^{-3}$ to $1.0 \times 10^{-3}$ (left), while the tensions stay far from the target ones (right; Pearson 0.04, then 0.34; error/spread 1.33, then 1.10).</figcaption>
+</figure>
+
 ## Other costs for tension inference
 
 This example uses the vertex-to-vertex cost $\mathcal C_{\text{v2v}}$. The paper also uses the

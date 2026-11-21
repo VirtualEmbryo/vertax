@@ -77,3 +77,8 @@ fig.savefig("bounded_relaxation.png")
 
 `FacePlot.FATES` colors the cells by their fate marker, the second column of `mesh.faces`. The cell
 areas are signed: a cell with a non-positive area has folded.
+
+<figure markdown="span">
+  ![A 20-cell cluster with a curved outline before and after relaxation, edges coloured by tension and cells shaded by fate](../figures/example-bounded-relaxation.svg)
+  <figcaption markdown="span">The cluster before and after the relaxation of this page (1000 iterations), edges coloured by their tension $1 + \operatorname{sigmoid}(\lambda_e)$ and cells shaded by fate.</figcaption>
+</figure>

@@ -100,3 +100,8 @@ The folder holds `hyper-parameters.txt` (the output of `self_summary`), `summary
 `outer_cost_over_time.png`, `inner_cost_over_time.png` and one per custom metric, and the meshes in
 `meshes_plot/` and `meshes_data/`, at epoch 0 and every `save_*_every` epochs. `pre_inner_optimization=True`
 would relax the mesh once before the first epoch.
+
+<figure markdown="span">
+  ![The outer cost and the tension correlation over 6 epochs, read from summary.csv](../figures/example-many-epochs.svg)
+  <figcaption markdown="span">The outer cost and the custom metric over the 6 epochs of this page, read back from `summary.csv`.</figcaption>
+</figure>

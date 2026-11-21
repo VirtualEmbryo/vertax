@@ -66,6 +66,11 @@ per vertex and per iteration. The optimizer uses equilibrium
 propagation here only because automatic differentiation refuses a line-search inner solver; this
 experiment runs no outer step.
 
+<figure markdown="span">
+  ![The cluster of seed 5 after one step of gd_linesearch, without the cap, with long vertex steps and a folded cell circled, and with the cap, with short steps](../figures/example-vertex-step-cap.svg)
+  <figcaption markdown="span">One iteration of `gd_linesearch` on the cluster of seed 5: without the cap one vertex moves by 74 × `min_dist_T1` and one cell folds (circled); with it, no step exceeds 5 × `min_dist_T1`; dashed: the cluster before the step.</figcaption>
+</figure>
+
 ## L-BFGS with T1 transitions
 
 `optax.lbfgs()` keeps curvature information from previous iterations. After a T1 transition this
