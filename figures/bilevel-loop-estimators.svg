@@ -2,7 +2,7 @@
 <!-- Schematic of one epoch of the bilevel optimization and of the four gradient estimators. Hand-written; the
      estimator hues and markers are those of scripts/make_doc_figures.py: AD #3953a4 circle, Sen-ID #8753FF triangle,
      Adj-ID #ed2024 square, EP #0c8140 diamond. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="780" height="420" viewBox="0 0 780 420" font-family="DejaVu Sans, Verdana, Helvetica, Arial, sans-serif" font-size="13" fill="#333333">
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="530" viewBox="0 0 780 530" font-family="DejaVu Sans, Verdana, Helvetica, Arial, sans-serif" font-size="16" fill="#333333" xmlns:c2pa="http://c2pa.org/manifest">
   <title>One epoch of the bilevel optimization, with the four gradient estimators</title>
   <desc>The parameters theta set the energy; the relaxation finds the equilibrium X*; the cost compares it with the target; one of four estimators (AD, Sen-ID, Adj-ID, EP) gives the gradient of the cost with respect to theta; the outer solver takes a step and the mean-value constraints are applied, which gives the parameters of the next epoch.</desc>
   <defs>
@@ -10,75 +10,71 @@
       <path d="M0,1 L10,5 L0,9 z" fill="#555555"/>
     </marker>
   </defs>
-  <rect width="780" height="420" fill="#ffffff"/>
+  <rect width="780" height="530" fill="#ffffff"/>
 
   <!-- Top row: parameters, relaxation, cost. -->
   <g stroke="#333333" stroke-width="1" fill="#EEEBE3">
-    <rect x="26" y="35" width="180" height="80" rx="6"/>
-    <rect x="265" y="35" width="250" height="80" rx="6"/>
-    <rect x="580" y="35" width="170" height="80" rx="6"/>
+    <rect x="24" y="20" width="200" height="118" rx="6"/>
+    <rect x="268" y="20" width="270" height="118" rx="6"/>
+    <rect x="582" y="20" width="176" height="118" rx="6"/>
   </g>
-  <text x="116" y="66" text-anchor="middle" font-weight="bold">parameters θ</text>
-  <text x="116" y="86" text-anchor="middle" font-size="11">vertices_params,</text>
-  <text x="116" y="102" text-anchor="middle" font-size="11">edges_params, faces_params</text>
-  <text x="390" y="62" text-anchor="middle" font-weight="bold">relaxation (inner problem)</text>
-  <text x="390" y="84" text-anchor="middle" font-size="13" font-style="italic">X*<tspan font-style="normal" font-size="10" dy="4">θ</tspan><tspan dy="-4" font-style="normal"> ∈ argmin</tspan><tspan font-style="normal" font-size="10" dy="4">X</tspan><tspan dy="-4"> E</tspan><tspan font-style="normal">(</tspan>X<tspan font-style="normal">, θ)</tspan></text>
-  <text x="390" y="104" text-anchor="middle" font-size="12">with T1 transitions</text>
-  <text x="665" y="66" text-anchor="middle" font-weight="bold">cost</text>
-  <text x="665" y="88" text-anchor="middle" font-style="italic">C<tspan font-style="normal">(</tspan>X*<tspan font-style="normal" font-size="10" dy="4">θ</tspan><tspan dy="-4" font-style="normal">, target)</tspan></text>
-  <g stroke="#555555" stroke-width="1.3" fill="none">
-    <line x1="206" y1="75" x2="261" y2="75" marker-end="url(#flow)"/>
-    <line x1="515" y1="75" x2="576" y2="75" marker-end="url(#flow)"/>
-    <line x1="665" y1="115" x2="665" y2="166" marker-end="url(#flow)"/>
+  <text x="124" y="50" text-anchor="middle" font-weight="bold">parameters θ</text>
+  <g font-size="14.5" text-anchor="middle">
+    <text x="124" y="78">vertices_params,</text>
+    <text x="124" y="99">edges_params,</text>
+    <text x="124" y="120">faces_params</text>
+  </g>
+  <text x="403" y="50" text-anchor="middle" font-weight="bold">relaxation (inner problem)</text>
+  <text x="403" y="86" text-anchor="middle" font-style="italic">X*<tspan font-style="normal" font-size="12" dy="5">θ</tspan><tspan dy="-5" font-style="normal"> ∈ argmin</tspan><tspan font-style="normal" font-size="12" dy="5">X</tspan><tspan dy="-5"> E</tspan><tspan font-style="normal">(</tspan>X<tspan font-style="normal">, θ)</tspan></text>
+  <text x="403" y="118" text-anchor="middle" font-size="14.5">with T1 transitions</text>
+  <text x="670" y="50" text-anchor="middle" font-weight="bold">cost</text>
+  <text x="670" y="86" text-anchor="middle" font-style="italic">C<tspan font-style="normal">(</tspan>X*<tspan font-style="normal" font-size="12" dy="5">θ</tspan><tspan dy="-5" font-style="normal">, target)</tspan></text>
+  <g stroke="#555555" stroke-width="1.4" fill="none">
+    <line x1="224" y1="79" x2="264" y2="79" marker-end="url(#flow)"/>
+    <line x1="538" y1="79" x2="578" y2="79" marker-end="url(#flow)"/>
+    <line x1="670" y1="138" x2="670" y2="190" marker-end="url(#flow)"/>
   </g>
 
-  <!-- The four estimators. -->
-  <text x="30" y="160" font-weight="bold">gradient ∇<tspan font-size="10" dy="4">θ</tspan><tspan dy="-4"> C, by one of four estimators</tspan></text>
-  <g fill="#ffffff" stroke-width="1.6">
-    <rect x="30" y="172" width="172" height="112" rx="6" stroke="#3953a4"/>
-    <rect x="216" y="172" width="172" height="112" rx="6" stroke="#8753FF"/>
-    <rect x="402" y="172" width="172" height="112" rx="6" stroke="#ed2024"/>
-    <rect x="588" y="172" width="162" height="112" rx="6" stroke="#0c8140"/>
+  <!-- The four estimators, two by two. -->
+  <text x="24" y="178" font-weight="bold">gradient ∇<tspan font-size="12" dy="5">θ</tspan><tspan dy="-5"> C, by one of four estimators</tspan></text>
+  <g fill="#ffffff" stroke-width="1.8">
+    <rect x="24" y="194" width="360" height="96" rx="6" stroke="#3953a4"/>
+    <rect x="398" y="194" width="360" height="96" rx="6" stroke="#8753FF"/>
+    <rect x="24" y="302" width="360" height="96" rx="6" stroke="#ed2024"/>
+    <rect x="398" y="302" width="360" height="96" rx="6" stroke="#0c8140"/>
   </g>
   <!-- Markers: circle, triangle, square, diamond. -->
-  <circle cx="48" cy="192" r="6" fill="#3953a4"/>
-  <path d="M234,186 L241,198 L227,198 z" fill="#8753FF"/>
-  <rect x="414" y="186" width="12" height="12" fill="#ed2024"/>
-  <path d="M606,184 L614,192 L606,200 L598,192 z" fill="#0c8140"/>
+  <circle cx="45" cy="218" r="7" fill="#3953a4"/>
+  <path d="M419,210 L427,225 L411,225 z" fill="#8753FF"/>
+  <rect x="38" y="319" width="14" height="14" fill="#ed2024"/>
+  <path d="M419,316 L428,326 L419,336 L410,326 z" fill="#0c8140"/>
   <g font-weight="bold">
-    <text x="62" y="197" fill="#3953a4">AD</text>
-    <text x="248" y="197" fill="#8753FF">Sen-ID</text>
-    <text x="434" y="197" fill="#ed2024">Adj-ID</text>
-    <text x="620" y="197" fill="#0c8140">EP</text>
+    <text x="62" y="224" fill="#3953a4">AD</text>
+    <text x="436" y="224" fill="#8753FF">Sen-ID</text>
+    <text x="62" y="332" fill="#ed2024">Adj-ID</text>
+    <text x="436" y="332" fill="#0c8140">EP</text>
   </g>
-  <g font-size="12">
-    <text x="40" y="222">differentiates through</text>
-    <text x="40" y="238">the iterations of the</text>
-    <text x="40" y="254">relaxation, in reverse</text>
-    <text x="40" y="270">mode (jax.grad)</text>
-    <text x="226" y="222">one linear solve per</text>
-    <text x="226" y="238">parameter, at the</text>
-    <text x="226" y="254">equilibrium:</text>
-    <text x="226" y="272" font-style="italic">H s<tspan font-size="9" dy="3" font-style="normal">j</tspan><tspan dy="-3" font-style="normal"> = −∂</tspan><tspan font-size="9" dy="3" font-style="normal">θj</tspan><tspan dy="-3" font-style="normal"> ∇</tspan><tspan font-size="9" dy="3" font-style="normal">X</tspan><tspan dy="-3"> E</tspan></text>
-    <text x="412" y="222">one linear solve, at</text>
-    <text x="412" y="238">the equilibrium:</text>
-    <text x="412" y="258" font-style="italic">H λ <tspan font-style="normal">= ∇</tspan><tspan font-size="9" dy="3" font-style="normal">X</tspan><tspan dy="-3"> C</tspan></text>
-    <text x="598" y="222">two relaxations of</text>
-    <text x="598" y="240" font-style="italic">E <tspan font-style="normal">± β</tspan> C<tspan font-style="normal">, then the</tspan></text>
-    <text x="598" y="256">difference of ∂<tspan font-size="9" dy="3">θ</tspan><tspan dy="-3" font-style="italic"> E</tspan></text>
-    <text x="598" y="272">divided by 2β</text>
+  <g font-size="14.5">
+    <text x="40" y="252">differentiates through the iterations of</text>
+    <text x="40" y="274">the relaxation, in reverse mode (jax.grad)</text>
+    <text x="414" y="252">one linear solve per parameter, at the</text>
+    <text x="414" y="276">equilibrium: <tspan font-style="italic">H s</tspan><tspan font-size="11" dy="4">j</tspan><tspan dy="-4"> = −∂</tspan><tspan font-size="11" dy="4">θj</tspan><tspan dy="-4"> ∇</tspan><tspan font-size="11" dy="4">X</tspan><tspan dy="-4" font-style="italic"> E</tspan></text>
+    <text x="40" y="360">one linear solve, at the equilibrium:</text>
+    <text x="40" y="384"><tspan font-style="italic">H λ</tspan> = ∇<tspan font-size="11" dy="4">X</tspan><tspan dy="-4" font-style="italic"> C</tspan></text>
+    <text x="414" y="360">two relaxations of <tspan font-style="italic">E</tspan> ± β <tspan font-style="italic">C</tspan>, then the</text>
+    <text x="414" y="384">difference of ∂<tspan font-size="11" dy="4">θ</tspan><tspan dy="-4" font-style="italic"> E</tspan> divided by 2β</text>
   </g>
 
   <!-- Outer step and back to the parameters. -->
   <g stroke="#333333" stroke-width="1" fill="#EEEBE3">
-    <rect x="265" y="318" width="250" height="72" rx="6"/>
+    <rect x="238" y="430" width="330" height="84" rx="6"/>
   </g>
-  <text x="390" y="345" text-anchor="middle" font-weight="bold">outer step</text>
-  <text x="390" y="364" text-anchor="middle" font-size="12">one step of outer_solver (Optax),</text>
-  <text x="390" y="380" text-anchor="middle" font-size="12">then params_normalization</text>
-  <g stroke="#555555" stroke-width="1.3" fill="none">
-    <line x1="390" y1="284" x2="390" y2="314" marker-end="url(#flow)"/>
-    <polyline points="265,354 12,354 12,75 22,75" marker-end="url(#flow)"/>
+  <text x="403" y="458" text-anchor="middle" font-weight="bold">outer step</text>
+  <text x="403" y="482" text-anchor="middle" font-size="14.5">one step of outer_solver (Optax),</text>
+  <text x="403" y="503" text-anchor="middle" font-size="14.5">then params_normalization</text>
+  <g stroke="#555555" stroke-width="1.4" fill="none">
+    <line x1="391" y1="398" x2="391" y2="426" marker-end="url(#flow)"/>
+    <polyline points="238,472 10,472 10,79 20,79" marker-end="url(#flow)"/>
   </g>
-  <text x="150" y="344" font-size="12" fill="#555555" text-anchor="middle">next epoch</text>
-</svg>
+  <text x="124" y="462" font-size="14.5" fill="#555555" text-anchor="middle">next epoch</text>
+<metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTozYzUwNmFlNy1lMzA1LTQ4YjItYjMxZC00OGE5MWIxZTM3NWEAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaNx8XuoH6NR7zKnfUDiIrYcAAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDplZjRiNzQ3NC1jZWViLTQ1NDctODIxMi03MDM0YWVhMmJjNjhscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNotgpg4K45mcPmW89CAYD0nAAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggxwQznuCmQT1UQExABUbf6lkmYPdhO8DP3bXwXGXIuA+kZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaMs8CmuDk49h3qn5ikXNAdUAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRMAAAAAAAAAAAAAAAAZGhhc2hYIM4x/5HJRRT4gMxh5cd7qahJrXwZ1UMCKF6UOxLdSpuPZG5hbWVuanVtYmYgbWFuaWZlc3RqZXhjbHVzaW9uc4GiZXN0YXJ0GRbLZmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOjNjNTA2YWU3LWUzMDUtNDhiMi1iMzFkLTQ4YTkxYjFlMzc1YS9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOjE2N2ExODU1LTIyMWMtNDQ4NC1hMzJkLWI3Y2I5YWQyMmIxOXJjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCDHBDOe4KZBPVRATEAFRt/qWSZg92E7wM/dtfBcZci4D6JjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggVlqfi0tU3VZZm2Ml9wjUcLvmFs5qqcl8Zyglx9OVf5CiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFggGh79g0Mt23bEkpBo/BwTRBfKzQSyvIWz+Mu+HuOG1hN0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQOnxYKvQJ0kK5+8yhGlRAdspd01UXrs/OSi09gNp7rwKCdHdkkYy/fn+jDmyMg20rbwnqB3PxZ1zWj1+UhtDQpU=</c2pa:manifest></metadata></svg>
