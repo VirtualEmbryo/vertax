@@ -11,7 +11,7 @@
      `pip install vertax` failed. Restore it when the package is actually published:
      [![Python package index](https://img.shields.io/pypi/v/vertAX.svg)](https://pypi.org/project/vertAX) -->
 
-<!-- [![DOI](https://zenodo.org/badge/144513571.svg)](https://zenodo.org/badge/latestdoi/144513571) -->
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24414586.svg)](https://doi.org/10.5281/zenodo.24414586)
 
 </div>
 
@@ -81,11 +81,11 @@ In other words, VertAX repeatedly solves a mechanical equilibrium problem for a 
 - 🔬 **Multiple gradient strategies**  
   Four outer-gradient estimators: **Automatic Differentiation (AD)**, **sensitivity Implicit Differentiation (Sen-ID)**, **Adjoint-state Implicit Differentiation (Adj-ID)**, and a **centered (two-sided) Equilibrium Propagation (EP)** estimator.
 
-- 🔁 **Differentiable and non-differentiable workflows**  
-  VertAX supports fully differentiable pipelines, while EP also enables inverse modeling with simulators that are only accessible through repeated executions.
+- 🔁 **Gradients with or without differentiating the solver**  
+  AD differentiates through the relaxation; implicit differentiation and EP need only its equilibrium, and EP only the derivative of the energy with respect to the parameters at two nudged equilibria, so any inner solver can be used.
 
-- ⚡ **GPU acceleration with JAX**  
-  JIT compilation and vectorization enable efficient simulations on CPU and GPU.
+- ⚡ **Compiled with JAX**  
+  JIT compilation and vectorization make simulations efficient on the CPU.
 
 - 🎨 **Custom energies and costs in plain Python**  
   Define your own mechanical models and inverse-design objectives without changing the library internals.
@@ -141,7 +141,8 @@ Matplotlib (plotting), scikit-image and tifffile (image input), pandas, and Cell
 of microscopy images). Exact pins are in `pyproject.toml`; `uv.lock` and `requirements.txt` are
 generated from it and kept in sync by the `uv` pre-commit hooks.
 
-For GPU support, install JAX with CUDA as described in the [JAX docs](https://github.com/google/jax#installation) before installing VertAX.
+VertAX runs on the CPU, where it is developed and tested; for tissues of the sizes it is made for, a GPU does not
+make it faster.
 
 ### Numerical precision
 
@@ -160,144 +161,11 @@ rheometry and clamped-patch modules below require it.
 
 ---
 
-## Simulation modes
-
-VertAX supports two complementary simulation modes, designed for different classes of epithelial mechanics problems. The **periodic** mode is best suited for bulk tissue dynamics without explicit external boundaries, while the **bounded** mode is designed for finite tissue clusters with curved free interfaces. Both modes share the same vertex-based formulation and optimization framework, but differ in how boundaries are represented and initialized.
-
-<table>
-  <tr>
-    <th>Mode</th>
-    <th>Use case</th>
-    <th>Initialization</th>
-    <th>Illustration</th>
-  </tr>
-  <tr>
-    <td><b>Periodic</b></td>
-    <td>Bulk tissue dynamics, no explicit boundaries</td>
-    <td>Random Voronoi seeds or segmented images (Cellpose)</td>
-    <td rowspan="2" align="center">
-      <img src="./figures/periodic_bounded.png" alt="Periodic and bounded simulation modes in VertAX" width="220">
-    </td>
-  </tr>
-  <tr>
-    <td><b>Bounded</b></td>
-    <td>Finite tissue clusters with curved interfaces</td>
-    <td>Random Voronoi seeds; boundary arcs as additional degrees of freedom (DOFs)</td>
-  </tr>
-</table>
-
----
-
-## Gradient Strategies
-
-VertAX implements and benchmarks four complementary methods for computing outer gradients through the implicit inner problem:
-
-| Method                     | How it works                                                                                              | Pros                                                               | Cons                                                  |
-| -------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
-| **AD** (Automatic Diff.)   | Reverse-mode `jax.grad` through the **unrolled** inner solve (`BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION`) | Exact for differentiable pipelines; easy in JAX                    | Memory and cost scale with the number of unrolled inner iterations; incompatible with line-search inner solvers |
-| **Sen-ID** (Implicit Diff.) | Differentiates the optimality condition ∇ₓE=0 via the Implicit Function Theorem, propagating sensitivities forward (`IMPLICIT_DIFFERENTIATION`) | No unrolling; constant memory; exact near equilibrium              | Requires a Hessian solve; cost grows with the number of parameters |
-| **Adj-ID** (Adjoint state) | Same optimality condition, solved in the **adjoint** (VJP) direction instead (`ADJOINT_STATE`)             | One linear solve per outer step regardless of parameter count      | Requires a Hessian solve; sensitive to ill-conditioning |
-| **EP** (Equilibrium Prop.) | **Centered, two-sided** estimator: solves for a free equilibrium at −β and a nudged equilibrium at +β, then takes (∇L\_nudged − ∇L\_free) / (2β); no backprop required | Memory-efficient; works with non-differentiable/incomplete solvers; the symmetric ∓β perturbation cancels the leading-order O(β) bias, giving a lower-variance, more accurate gradient than a one-sided (0 → +β) estimate | Still a finite-β approximation of the exact implicit gradient (residual error scales as O(β²)); requires two inner solves per outer step; accuracy depends on choice of β |
-
-**In practice**: VertAX's EP estimator is a centered second-order estimator based on symmetric ∓β perturbations, not a one-sided finite difference. AD and EP often recover similar parameter trends on synthetic inverse problems, while EP is especially attractive for simulators that cannot be made fully differentiable.
-
----
-
-## Tutorials
-
-See the [`examples/`](examples) folder for in-depth examples:
-
-| Notebook                                  | Description                                                |
-| ----------------------------------------- | ---------------------------------------------------------- |
-| `inverse_modelling_example.ipynb`         | Inverse modeling with periodic boundary conditions         |
-| `inverse_modelling_example_bounded.ipynb` | Inverse design with bounded cluster (convergent extension) |
-| `pbc_from_image.ipynb`                    | Building a periodic mesh from a segmented microscopy image  |
-
-For **tension inference specifically** — which settings matter, which metric to report, and which
-conclusions from a run are trustworthy — see
-[`docs/tension_inference_guide.md`](docs/tension_inference_guide.md). It collects the practical
-results of the paper, including the mean-tension normalization constraint (which is **off by
-default** and must be set explicitly), the effect of truncating the inner solve and the choice of the outer cost.
-
----
-
-## API Reference
-
-See the [documentation](https://virtualembryo.github.io/vertax/).
-
----
-
-## Further modules
-
-* **Tracing a segmentation into a vertex mesh** (`vertax.trace`). Turns a label mask, including a raw
-  crop with unsegmented margin, into a straight-edge mesh and reports which vertices are free or clamped.
-
-  ```python
-  import tifffile
-  from vertax import trace_mask_closed
-
-  mesh = trace_mask_closed(tifffile.imread("tests/trace_fixture_demo_003_pos2_mask.tif"))
-  print(mesh.n_verts, int(mesh.free.sum()))   # vertices, and those with a complete force balance
-  ```
-
-* **Clamped-rim force balance on cropped tissues** (`vertax.clamped`). Relaxes the free vertices of a
-  traced patch with the clamped ones held at their observed positions, and reports the residual over
-  free degrees of freedom only. Requires `float64`.
-
-  ```python
-  import jax.numpy as jnp
-  from jax.experimental import enable_x64
-  from vertax.clamped import load_mesh, patch_geometry, relax
-
-  with enable_x64():
-      patch = load_mesh("tests/fixtures/clamped_patch_demo_003_pos2.npz")
-      gamma = jnp.ones(len(patch.EA))                      # one tension per cell-cell edge
-
-      def E(x, K):
-          A, P, L = patch_geometry(x, patch)
-          return 0.5 * K * jnp.sum((A - 1.0) ** 2) + jnp.sum(gamma * L)
-
-      out = relax(E, patch, K=5.0)
-      print(out["r_eq"], out["min_area"])                  # residual; smallest signed area
-  ```
-
-* **Bulk shear rheometry and its inverse design** (`vertax.rheology`, `ShearRheologyOptimizer`).
-  Drives a periodic tissue with a cosine force mode, reads the compliance from the response, and
-  designs parameters against a target modulus. Requires `float64`.
-
-  ```python
-  import math
-  import jax.numpy as jnp
-  from jax.experimental import enable_x64
-  from vertax import PbcMesh
-  from vertax.energy import energy_shape_factor_homo
-  from vertax.rheology import make_drive_energy, make_shear_mode, mode_amplitude
-
-  side = math.sqrt(20.0)
-  with enable_x64():
-      mesh = PbcMesh.from_random_seeds(nb_seeds=20, width=side, height=side, random_key=231)
-      verts = jnp.asarray(mesh.vertices, dtype=jnp.float64)
-      mode = make_shear_mode(verts, side, side, n=1)       # built from the undriven reference state
-
-      def energy(v, h, f, _vp, _hp, fp):
-          return energy_shape_factor_homo(v, h, f, side, side, jnp.atleast_1d(jnp.asarray(fp)))
-
-      driven = make_drive_energy(energy, mode, 0.02)       # use as `loss_function_inner`
-      print(mode_amplitude(verts, mode))                   # response amplitude (0 at the reference)
-  ```
-
-### Running the tests
-
-```sh
-uv run pytest              # default suite; long-running tests are deselected
-uv run pytest -m long      # the long-running tests only (tens of minutes, several GB of RAM)
-```
-
----
-
 ## Quick Start — Inverse Modeling
 
-VertAX can also optimize model parameters to match a target geometry.
+A small inverse problem: the target shape factors of a periodic tissue are recovered from its equilibrium
+geometry. The 20 epochs below take about a minute on a CPU and reduce the error about threefold; more epochs
+reduce it further (see the [Examples](https://virtualembryo.github.io/vertax/examples/)).
 
 ```python
 import math
@@ -361,17 +229,163 @@ optimizer.faces_target    = target.faces.copy()
 
 # --- Outer loss and bilevel method ---
 optimizer.loss_function_outer = cost_v2v
-optimizer.outer_solver = optax.adam(learning_rate=1e-4, nesterov=True)
+optimizer.outer_solver = optax.adam(learning_rate=1e-2, nesterov=True)
 optimizer.bilevel_optimization_method = BilevelOptimizationMethod.EQUILIBRIUM_PROPAGATION
 
 # --- Run bilevel optimization ---
+def shape_factor_error():
+    return float(jnp.mean(jnp.abs(mesh.faces_params - target.faces_params)))
+
+print("error before:", shape_factor_error())
 for epoch in range(20):
     optimizer.bilevel_optimization(mesh)
+print("error after 20 epochs:", shape_factor_error())
 
-plot_mesh(mesh, title="Recovered mesh after inverse modeling")
+plot_mesh(mesh, title="After 20 epochs", show=True)
 ```
 
 For full inverse-modeling examples, see [Tutorials](#tutorials) section.
+
+---
+
+## Simulation modes
+
+VertAX supports two complementary simulation modes, designed for different classes of epithelial mechanics problems. The **periodic** mode is best suited for bulk tissue dynamics without explicit external boundaries, while the **bounded** mode is designed for finite tissue clusters with curved free interfaces. Both modes share the same vertex-based formulation and optimization framework, but differ in how boundaries are represented and initialized.
+
+<table>
+  <tr>
+    <th>Mode</th>
+    <th>Use case</th>
+    <th>Initialization</th>
+    <th>Illustration</th>
+  </tr>
+  <tr>
+    <td><b>Periodic</b></td>
+    <td>Bulk tissue dynamics, no explicit boundaries</td>
+    <td>Random Voronoi seeds</td>
+    <td rowspan="2" align="center">
+      <img src="./figures/periodic_bounded.png" alt="Periodic and bounded simulation modes in VertAX" width="220">
+    </td>
+  </tr>
+  <tr>
+    <td><b>Bounded</b></td>
+    <td>Finite tissue clusters with curved interfaces</td>
+    <td>Random Voronoi seeds; boundary arcs as additional degrees of freedom (DOFs)</td>
+  </tr>
+</table>
+
+Real tissues: a segmentation of a microscopy image is traced into a vertex mesh with `vertax.trace`, and
+its free vertices are relaxed, with the rim held in place, by `vertax.clamped` (see [Further modules](#further-modules)).
+
+---
+
+## Gradient Strategies
+
+VertAX implements and benchmarks four complementary methods for computing outer gradients through the implicit inner problem:
+
+| Method                     | How it works                                                                                              | Pros                                                               | Cons                                                  |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
+| **AD** (Automatic Diff.)   | Reverse-mode `jax.grad` through the **unrolled** inner solve (`BilevelOptimizationMethod.AUTOMATIC_DIFFERENTIATION`) | Exact for differentiable pipelines; easy in JAX                    | Memory and cost scale with the number of unrolled inner iterations; incompatible with line-search inner solvers |
+| **Sen-ID** (Implicit Diff.) | Differentiates the optimality condition ∇ₓE=0 via the Implicit Function Theorem, propagating sensitivities forward (`IMPLICIT_DIFFERENTIATION`) | No unrolling; constant memory; exact near equilibrium              | Requires a Hessian solve; cost grows with the number of parameters |
+| **Adj-ID** (Adjoint state) | Same optimality condition, solved in the **adjoint** (VJP) direction instead (`ADJOINT_STATE`)             | One linear solve per outer step regardless of parameter count      | Requires a Hessian solve; sensitive to ill-conditioning |
+| **EP** (Equilibrium Prop.) | **Centered, two-sided** estimator: relaxes the nudged energies E + βC and E − βC to X₊ and X₋, then takes [∂θE(X₊) − ∂θE(X₋)] / (2β); no differentiation through the solver (`EQUILIBRIUM_PROPAGATION`) | Memory-efficient; works with any inner solver, line-search and truncated ones included; the symmetric ±β nudges cancel the O(β) error of a one-sided (0 → +β) estimate, leaving an O(β²) error | A finite-β approximation of the implicit gradient; two inner solves per outer step; its accuracy depends on the choice of β |
+
+**In practice**: VertAX's EP estimator is centered, built on symmetric ±β nudges, not a one-sided finite difference. On the synthetic inverse problems of the paper, the four estimators generally recover parameters equally well and differ mainly in computational cost.
+
+---
+
+## Tutorials
+
+The [Examples](https://virtualembryo.github.io/vertax/examples/) of the documentation are short scripts, each with
+its result. The [`examples/`](examples) folder holds three notebooks:
+
+| Notebook                                  | Description                                                |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| `inverse_modelling_example.ipynb`         | Inverse modeling with periodic boundary conditions: line tensions recovered with AD |
+| `inverse_modelling_example_bounded.ipynb` | Inverse design of a bounded cluster: its aspect ratio set to a target, an elongation of the kind seen in convergent extension |
+| `pbc_from_image.ipynb`                    | A periodic mesh from a segmented image: **not reliable on real masks** (see its first cell); for real segmentations, use `vertax.trace` |
+
+For **tension inference specifically** — which settings matter, which metric to report, and which
+conclusions from a run are trustworthy — see
+[`docs/tension_inference_guide.md`](docs/tension_inference_guide.md). It collects the practical
+results of the paper, including the mean-tension normalization constraint (which is **off by
+default** and must be set explicitly), the effect of truncating the inner solve and the choice of the outer cost.
+
+---
+
+## Further modules
+
+* **Tracing a segmentation into a vertex mesh** (`vertax.trace`). Turns a label mask, including a raw
+  crop with unsegmented margin, into a straight-edge mesh and reports which vertices are free or clamped.
+
+  ```python
+  import tifffile
+  from vertax import trace_mask_closed
+
+  mesh = trace_mask_closed(tifffile.imread("tests/trace_fixture_demo_003_pos2_mask.tif"))
+  print(mesh.n_verts, int(mesh.free.sum()))   # vertices, and those with a complete force balance
+  ```
+
+* **Clamped-rim force balance on cropped tissues** (`vertax.clamped`). Relaxes the free vertices of a
+  traced patch with the clamped ones held at their observed positions, and reports the residual over
+  free degrees of freedom only. Requires `float64`.
+
+  ```python
+  import jax.numpy as jnp
+  from jax.experimental import enable_x64
+  from vertax.clamped import load_mesh, patch_geometry, relax
+
+  with enable_x64():
+      patch = load_mesh("tests/fixtures/clamped_patch_demo_003_pos2.npz")
+      gamma = jnp.ones(len(patch.EA))                      # one tension per cell-cell edge
+
+      def E(x, K):
+          A, P, L = patch_geometry(x, patch)
+          return 0.5 * K * jnp.sum((A - 1.0) ** 2) + jnp.sum(gamma * L)
+
+      out = relax(E, patch, K=5.0)
+      print(out["r_eq"], out["min_area"])                  # residual; smallest signed area
+  ```
+
+* **Bulk shear rheometry and its inverse design** (`vertax.rheology`, `ShearRheologyOptimizer`).
+  Drives a periodic tissue with a cosine force mode, reads the compliance from the response, and
+  designs parameters against a target modulus. Requires `float64`.
+
+  ```python
+  import math
+  import jax.numpy as jnp
+  from jax.experimental import enable_x64
+  from vertax import PbcMesh
+  from vertax.energy import energy_shape_factor_homo
+  from vertax.rheology import make_drive_energy, make_shear_mode, mode_amplitude
+
+  side = math.sqrt(20.0)
+  with enable_x64():
+      mesh = PbcMesh.from_random_seeds(nb_seeds=20, width=side, height=side, random_key=231)
+      verts = jnp.asarray(mesh.vertices, dtype=jnp.float64)
+      mode = make_shear_mode(verts, side, side, n=1)       # built from the undriven reference state
+
+      def energy(v, h, f, _vp, _hp, fp):
+          return energy_shape_factor_homo(v, h, f, side, side, jnp.atleast_1d(jnp.asarray(fp)))
+
+      driven = make_drive_energy(energy, mode, 0.02)       # use as `loss_function_inner`
+      print(mode_amplitude(verts, mode))                   # response amplitude (0 at the reference)
+  ```
+
+---
+
+## Running the tests
+
+```sh
+uv run pytest              # default suite; long-running tests are deselected
+uv run pytest -m long      # the two long-running tests only (about 3 h each on one CPU)
+```
+
+---
+
+## API Reference
+
+See the [documentation](https://virtualembryo.github.io/vertax/).
 
 ---
 
@@ -391,13 +405,17 @@ If you use VertAX in your research, please cite the preprint [arXiv:2604.06896](
 }
 ```
 
-The same reference is in [`CITATION.cff`](CITATION.cff), which GitHub shows as "Cite this repository".
+To cite the software itself, use its Zenodo record:
+[doi:10.5281/zenodo.24414586](https://doi.org/10.5281/zenodo.24414586) for all versions, or
+[doi:10.5281/zenodo.24414587](https://doi.org/10.5281/zenodo.24414587) for version 0.4.0.
+
+The same references are in [`CITATION.cff`](CITATION.cff), which GitHub shows as "Cite this repository".
 
 ---
 
 ## Funding
 
-This project received funding from the European Union’s Horizon 2020 research and innovation programme under the **European Research Council** (ERC) grant agreement no. **949267**, and under the **Marie Skłodowska-Curie** grant agreement no. **945304** — Cofund **AI4theSciences**, hosted by **PSL University**. AP, JMCO, AS, FB, MP, FD and HT acknowledge support from CNRS and Collège de France
+This project received funding from the European Union’s Horizon 2020 research and innovation programme under the **European Research Council** (ERC) grant agreement no. **949267**, and under the **Marie Skłodowska-Curie** grant agreement no. **945304** — Cofund **AI4theSciences**, hosted by **PSL University**. AP, JMCO, AS, MP, FD and HT acknowledge support from CNRS and Collège de France.
 
 ---
 

@@ -26,9 +26,8 @@ uv sync            # the library and the development tools
 uv run pytest      # the test suite; long-running tests are deselected
 ```
 
-For GPU support, install JAX with CUDA as described in the
-[JAX documentation](https://github.com/google/jax#installation) before installing VertAX. VertAX
-pins `jax==0.4.34` and `jaxlib==0.4.34`, so the CUDA build must be of that version.
+VertAX runs on the CPU, where it is developed and tested; for tissues of the sizes it is made for, a GPU does not
+make it faster.
 
 To check the installation:
 

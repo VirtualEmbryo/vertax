@@ -52,6 +52,10 @@ If you use VertAX in your research, please cite the preprint
 }
 ```
 
+To cite the software itself, use its Zenodo record:
+[doi:10.5281/zenodo.24414586](https://doi.org/10.5281/zenodo.24414586) for all versions, or
+[doi:10.5281/zenodo.24414587](https://doi.org/10.5281/zenodo.24414587) for version 0.4.0.
+
 ## License
 
 VertAX is free software: you can redistribute it and modify it under the terms of the GNU General
