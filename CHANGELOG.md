@@ -7,6 +7,9 @@ The library of the VertAX paper: the Hessian-weighted cost, bounded T1 tension r
 Python 3.11 or 3.12 only (`requires-python = ">=3.11,<3.13"`): JAX and jaxlib 0.4.34, NumPy 1.26.4 and
 Matplotlib 3.8.0, which this version pins, have no wheels for later Pythons.
 
+Development of this release was supported by Anthropic's AI for Science program; parts of the code were
+written with Claude and reviewed by the developers.
+
 One library for the paper, its figure code and the documentation: the features that the VertAX paper's figure code uses and that only its branch had are merged in, the image costs leave the library, and the Hessian-weighted cost of the paper enters it. Without the new options, results are those of 0.3.0 with the fixes below.
 
 ### Added: the Hessian-weighted cost $\mathcal C_W$ and the staged schedule

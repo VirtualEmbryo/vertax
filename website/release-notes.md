@@ -13,6 +13,9 @@ fixes below.
 Python 3.11 or 3.12 only (`requires-python = ">=3.11,<3.13"`): JAX and jaxlib 0.4.34, NumPy 1.26.4 and
 Matplotlib 3.8.0, which this version pins, have no wheels for later Pythons.
 
+Development of this release was supported by Anthropic's AI for Science program; parts of the code were
+written with Claude and reviewed by the developers.
+
 **New: the Hessian-weighted cost $\mathcal C_W$ and the staged schedule.** `make_cost_hessian_weighted(target, energy)`
 is $\mathcal C_W=\tfrac12\lVert\widehat{\mathbf H}(\mathbf X-\mathbf X_{\text{target}})\rVert^2$, with
 $\widehat{\mathbf H}$ the Hessian of the energy at the target (`hessian_at_target`), every edge parameter set
